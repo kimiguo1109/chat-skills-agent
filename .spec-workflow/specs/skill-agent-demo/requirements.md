@@ -306,6 +306,56 @@
 - 按钮 hover：背景色 90% 透明度，过渡时间 200ms
 - 选项点击：背景色过渡 150ms
 
+### Requirement 14: 用户认证与Session持久化
+
+**User Story:** 作为学生，我希望系统能记住我的身份，每次重新登录后自动加载我的学习偏好、历史聊天记录和知识掌握度，从而获得连续的个性化学习体验。
+
+#### Acceptance Criteria
+
+1. WHEN 用户首次访问应用 THEN 系统 SHALL 显示登录/注册界面
+2. WHEN 用户注册新账户 THEN 系统 SHALL：
+   - 验证用户名唯一性（用户名长度 3-20 字符）
+   - 验证密码强度（至少 6 字符）
+   - 创建用户记录并生成 JWT token
+   - 自动登录并跳转到聊天界面
+3. WHEN 用户登录 THEN 系统 SHALL：
+   - 验证用户名和密码
+   - 生成 JWT token（有效期 7 天）
+   - 返回 token 和用户基本信息
+   - 前端存储 token 到 localStorage
+4. WHEN 已登录用户刷新页面 THEN 系统 SHALL：
+   - 从 localStorage 读取 token
+   - 验证 token 有效性
+   - 自动加载用户的 UserLearningProfile 和历史聊天记录
+5. WHEN 用户发送消息 THEN 系统 SHALL：
+   - 从 token 中提取 user_id
+   - 关联消息到该用户的 session
+   - 持久化聊天记录到存储
+6. WHEN 用户退出登录 THEN 系统 SHALL：
+   - 清除前端 localStorage 中的 token
+   - 清除当前会话状态
+   - 返回登录界面
+7. WHEN Memory Manager 需要用户数据 THEN 系统 SHALL：
+   - 从持久化存储加载 UserLearningProfile
+   - 加载最近 N 条历史消息作为 SessionContext
+   - 分析历史记录生成用户偏好摘要
+8. WHEN 用户完成一次交互 THEN 系统 SHALL：
+   - 更新 UserLearningProfile（mastery_map, preferred_artifact）
+   - 持久化更新到存储
+   - 保存聊天记录（user message + agent response）
+
+**存储方案：**
+- **Backend**: 使用 SQLite（轻量级，无需额外服务）
+- **数据表**:
+  - `users` 表：user_id, username, password_hash, created_at
+  - `learning_profiles` 表：user_id, mastery_map (JSON), preferred_artifact, last_active
+  - `chat_history` 表：id, user_id, session_id, role, content, artifact (JSON), timestamp
+
+**认证方式：**
+- 使用 JWT (JSON Web Token) 无状态认证
+- Token payload: {user_id, username, exp}
+- 前端每次请求在 Authorization header 中携带 token
+
 ## Non-Functional Requirements
 
 ### Code Architecture and Modularity
@@ -360,14 +410,17 @@
 以下功能在 demo 阶段不实现，但架构支持后续扩展：
 
 - ❌ 多技能 Pipeline（BundleSkill）
-- ❌ 用户认证系统
-- ❌ 持久化存储（Redis/MongoDB）
+- ~~❌ 用户认证系统~~ ✅ **已纳入 Requirement 14**
+- ~~❌ 持久化存储（Redis/MongoDB）~~ ✅ **已纳入 Requirement 14（使用 SQLite）**
 - ❌ 实时 WebSocket 更新
 - ❌ 语音输入/输出
 - ❌ 多语言支持
 - ❌ Homework Skill、FlashcardSkill 等其他技能
 - ❌ 完整的用户画像分析（简化版 mastery_map）
 - ❌ 成本监控和预算控制
+- ❌ 密码重置/找回功能
+- ❌ OAuth 第三方登录（Google/GitHub）
+- ❌ 用户头像上传
 
 ## Success Metrics
 
@@ -379,4 +432,7 @@ Demo 成功的标准：
 4. ✅ 系统能记住用户在会话中的主题切换
 5. ✅ 代码结构清晰，新增一个 Skill 只需 < 50 行代码
 6. ✅ 演示视频能展示核心价值：从工具箱到智能助手的体验提升
+7. 🆕 用户能注册/登录，退出后重新登录时自动加载历史偏好和聊天记录
+8. 🆕 系统能根据用户历史行为（如连续3次使用闪卡）持久化偏好，影响后续意图识别
+9. 🆕 多用户场景：不同用户的数据完全隔离，互不影响
 

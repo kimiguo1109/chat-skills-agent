@@ -119,6 +119,7 @@ class IntentRouter:
                 "explain": "explain_request",
                 "flashcard": "flashcard_request",
                 "learning_bundle": "learning_bundle",  # 保持原样，与skill配置一致
+                "mindmap": "mindmap_request",  # 思维导图
                 "other": "other"
             }
             

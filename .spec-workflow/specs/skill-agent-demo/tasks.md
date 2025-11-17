@@ -6,7 +6,7 @@
 
 ## 📊 进度概览
 
-**最后更新**: 2025-11-13 (Phase 4 完成)
+**最后更新**: 2025-11-14 (Phase 7 规划完成)
 
 | Phase | 状态 | 完成度 | 说明 |
 |-------|------|--------|------|
@@ -16,8 +16,9 @@
 | Phase 4: Agent API | ✅ 完成 | 1/1 (100%) | /api/agent/chat 端点 ✅, 依赖注入 ✅, 11个API测试通过 |
 | Phase 5: 前端组件 | ✅ 完成 | 9/9 (100%) | 所有组件完成：Context, Hooks, Layout, Chat, Artifacts, Theme ✅ |
 | Phase 6: 集成测试 | ⏳ 待开始 | 0/4 (0%) | 端到端测试 |
+| Phase 7: 用户认证与持久化 | 🆕 ⏳ 待开始 | 0/10 (0%) | JWT认证、SQLite持久化、登录注册界面 |
 
-**总体进度**: 16/16 任务完成 (100%) 🎉
+**总体进度**: 21/31 任务完成 (68%) | **Phase 1-5**: 100% ✅ | **Phase 6-7**: 0%
 **测试统计**: 146 个后端测试通过 (0.21秒), 前端编译通过 (247KB, 749ms)
 
 ---
@@ -517,17 +518,159 @@
   - _Requirements: Performance requirements_
   - _Prompt: Role: Senior Developer with expertise in performance optimization and production readiness | Task: Optimize application performance and polish: (1) measure and optimize API response times (target < 5s end-to-end), (2) add skeleton loaders for loading states, (3) analyze bundle size with vite build --analyze, implement code splitting if bundle > 500KB, (4) add proper HTML meta tags (title, description, viewport), favicon.ico and icon.svg, (5) run eslint --fix to clean code, fix any TypeScript errors, (6) run Lighthouse audit targeting > 90 scores | Restrictions: Must maintain functionality while optimizing, use React.lazy() for code splitting cautiously, ensure meta tags are SEO-friendly, fix all TypeScript strict errors | Success: API responses meet performance targets, loading states are smooth, bundle size is reasonable, meta tags are complete, no lint/TS errors, Lighthouse scores are good_
 
+## Phase 7: 用户认证与Session持久化 🆕
+
+### Backend: 用户认证系统
+
+- [ ] 7.1. 实现用户认证基础设施
+  - Files:
+    - `backend/app/models/user.py`
+    - `backend/app/core/auth.py`
+    - `backend/app/db/__init__.py`
+    - `backend/app/db/database.py`
+    - `backend/app/db/models.py`
+  - Create User Pydantic model and SQLite schema
+  - Implement JWT token generation and verification
+  - Create database initialization and connection management
+  - Purpose: 提供用户认证和数据持久化基础
+  - _Leverage: PyJWT, passlib, SQLite3, SQLAlchemy (optional)_
+  - _Requirements: 14 (用户认证与Session持久化)_
+  - _Prompt: Role: Backend Security Developer specializing in authentication systems | Task: Implement user authentication infrastructure following requirement 14, creating: (1) User Pydantic model with username, password_hash fields, (2) SQLite database schema with users, learning_profiles, chat_history tables, (3) auth.py with create_access_token(), verify_token(), hash_password(), verify_password() functions using PyJWT (HS256) and passlib (bcrypt), (4) database.py with SQLite connection management, init_db() to create tables | Restrictions: Must use bcrypt for password hashing, JWT tokens expire in 7 days, store SECRET_KEY in env vars, use parameterized queries to prevent SQL injection, validate username length (3-20 chars) and password strength (>= 6 chars) | Success: JWT tokens are generated correctly, passwords are securely hashed, database tables are created properly, token verification works, SQL injection is prevented_
+
+- [ ] 7.2. 创建认证API端点
+  - Files:
+    - `backend/app/api/auth.py`
+  - Create POST /auth/register endpoint
+  - Create POST /auth/login endpoint
+  - Create GET /auth/me endpoint (get current user)
+  - Add dependency function get_current_user()
+  - Purpose: 提供用户注册、登录、验证功能
+  - _Leverage: auth.py from task 7.1, FastAPI Depends_
+  - _Requirements: 14_
+  - _Prompt: Role: Backend API Developer with authentication expertise | Task: Create authentication API endpoints following requirement 14, implementing: (1) POST /auth/register accepting {username, password}, validating uniqueness, hashing password, creating user record, returning JWT token, (2) POST /auth/login validating credentials, returning token, (3) GET /auth/me extracting user from Authorization header "Bearer <token>", returning user info, (4) get_current_user() dependency function using HTTPBearer for token extraction and verification, raising HTTPException 401 for invalid tokens | Restrictions: Must validate username uniqueness, return 400 for duplicate usernames, return 401 for wrong credentials, extract token from Authorization header, verify token signature and expiration, log authentication events | Success: Register creates users correctly, login returns valid tokens, /auth/me returns correct user info, invalid tokens return 401, duplicate usernames return 400_
+
+- [ ] 7.3. 修改Memory Manager支持持久化
+  - Files:
+    - `backend/app/core/memory_manager.py`
+    - `backend/app/db/repository.py`
+  - Modify MemoryManager to load/save from SQLite
+  - Create UserProfileRepository for CRUD operations
+  - Create ChatHistoryRepository for message persistence
+  - Update get_summary() to include historical data
+  - Purpose: 实现用户数据持久化，支持跨会话记忆
+  - _Leverage: database.py from task 7.1, existing MemoryManager_
+  - _Requirements: 14, 3 (Memory Management)_
+  - _Prompt: Role: Backend Developer with database expertise | Task: Modify MemoryManager and create repository layer following requirements 14 and 3, implementing: (1) UserProfileRepository with load_profile(user_id), save_profile(user_id, profile), update_mastery(user_id, topic, level) methods, (2) ChatHistoryRepository with save_message(user_id, session_id, role, content, artifact), load_recent_messages(user_id, limit=10), (3) modify MemoryManager.__init__ to accept user_id and load profile from SQLite, (4) update get_summary() to include historical preference analysis from chat_history, (5) modify update() to persist changes to SQLite | Restrictions: Must use context managers for DB connections, handle SQLite locking gracefully, serialize mastery_map and artifact to JSON for storage, limit historical message loading to prevent performance issues, log all DB operations | Success: Profiles persist across sessions, chat history is saved correctly, get_summary() includes historical context, concurrent access is handled, DB errors are caught gracefully_
+
+- [ ] 7.4. 集成认证到Agent API
+  - Files:
+    - `backend/app/api/agent.py`
+    - `backend/app/main.py`
+  - Add get_current_user dependency to /api/agent/chat
+  - Modify agent_chat to extract user_id from current_user
+  - Pass user_id to MemoryManager and Orchestrator
+  - Update CORS to allow Authorization headers
+  - Purpose: 保护Agent API，关联请求到用户
+  - _Leverage: get_current_user from task 7.2, agent.py_
+  - _Requirements: 14, 8 (Integration)_
+  - _Prompt: Role: Backend Integration Developer | Task: Integrate authentication into Agent API following requirements 14 and 8, modifying: (1) agent_chat endpoint to use Depends(get_current_user), extracting user_id from current_user, (2) get_memory_manager() to accept user_id and initialize MemoryManager with it, (3) orchestrator.execute() to receive user_id for context building, (4) main.py CORS settings to include "Authorization" in allow_headers, (5) save user message and agent response to chat_history after each interaction | Restrictions: Must require authentication (401 if no token), propagate user_id through all layers, maintain backward compatibility with existing code structure, log user_id with all operations for auditing | Success: Unauthenticated requests return 401, user_id is correctly extracted, memory and orchestration use user-specific data, CORS allows Authorization header, chat history is saved_
+
+### Frontend: 登录注册界面
+
+- [ ] 7.5. 实现AuthContext和认证状态管理
+  - Files:
+    - `frontend/src/contexts/AuthContext.tsx`
+    - `frontend/src/hooks/useAuth.ts`
+    - `frontend/src/services/auth.ts`
+  - Create AuthProvider managing user state and token
+  - Implement login(), register(), logout() functions
+  - Add token storage to localStorage
+  - Add token refresh logic
+  - Purpose: 管理前端认证状态
+  - _Leverage: React Context, Axios_
+  - _Requirements: 14_
+  - _Prompt: Role: Frontend Developer specializing in authentication and state management | Task: Create authentication context and service following requirement 14, implementing: (1) AuthContext.tsx with AuthProvider managing state {user, token, isAuthenticated, isLoading}, (2) useAuth() hook exposing login(username, password), register(username, password), logout() functions, (3) auth.ts service with registerUser(), loginUser() API calls to /auth/register and /auth/login, (4) token storage to localStorage as "auth_token", (5) automatic token loading on app mount, (6) token injection into Axios Authorization header, (7) handle 401 responses to auto-logout | Restrictions: Must store token securely in localStorage, clear token on logout, set Axios default header "Authorization: Bearer <token>", handle network errors gracefully, validate username/password on frontend before API call | Success: AuthContext provides user state correctly, login/register work with backend API, token persists across page refresh, logout clears state and token, Axios includes Authorization header_
+
+- [ ] 7.6. 创建登录和注册界面组件
+  - Files:
+    - `frontend/src/components/auth/LoginPage.tsx`
+    - `frontend/src/components/auth/RegisterPage.tsx`
+    - `frontend/src/components/auth/AuthLayout.tsx`
+  - Create LoginPage with username/password inputs
+  - Create RegisterPage with validation
+  - Add form validation and error display
+  - Design modern auth UI matching app theme
+  - Purpose: 提供用户认证入口界面
+  - _Leverage: TailwindCSS, useAuth hook, React Hook Form (optional)_
+  - _Requirements: 14_
+  - _Prompt: Role: Frontend UI Developer with authentication UX expertise | Task: Create authentication pages following requirement 14 and app design theme, implementing: (1) AuthLayout.tsx with centered card (max-w-md), StudyX logo, gradient background, (2) LoginPage.tsx with username input, password input (type="password"), "登录" button, "还没有账号？注册" link, error message display area, (3) RegisterPage.tsx with username input (hint: 3-20字符), password input (hint: 至少6字符), confirm password input, "注册" button, "已有账号？登录" link, (4) client-side validation: username length, password strength, password match, (5) loading state on submit button, (6) error display for API errors (duplicate username, wrong password) | Restrictions: Must follow app color theme (primary blue), use Space Grotesk font, disable button during loading, show validation errors inline, use controlled inputs, clear password on error | Success: Login page is functional and beautiful, register page validates input, errors are user-friendly, loading states are clear, design matches app theme, navigation between login/register works_
+
+- [ ] 7.7. 实现Protected Route和路由守卫
+  - Files:
+    - `frontend/src/components/auth/ProtectedRoute.tsx`
+    - `frontend/src/App.tsx`
+  - Create ProtectedRoute component
+  - Add routing for /login, /register, /chat
+  - Implement route guards (redirect if not authenticated)
+  - Add loading state during token verification
+  - Purpose: 保护需要认证的页面
+  - _Leverage: React Router v6, useAuth hook_
+  - _Requirements: 14_
+  - _Prompt: Role: Frontend Developer with React Router expertise | Task: Implement protected routing following requirement 14, creating: (1) ProtectedRoute.tsx component checking isAuthenticated from useAuth(), redirecting to /login if false, rendering children if true, (2) modify App.tsx to use React Router v6 with routes: "/" (redirect to /login or /chat), "/login" (LoginPage), "/register" (RegisterPage), "/chat" (ProtectedRoute wrapping ChatInterface), (3) add loading spinner during initial auth check (isLoading from AuthContext), (4) redirect to /chat after successful login/register, (5) redirect to /login after logout | Restrictions: Must use React Router v6 syntax (BrowserRouter, Routes, Route, Navigate), check authentication before rendering protected routes, show loading state during token verification, handle deep linking (redirect to intended route after login) | Success: Unauthenticated users are redirected to /login, authenticated users can access /chat, login redirects to /chat, logout redirects to /login, loading state shows during auth check_
+
+- [ ] 7.8. 更新ChatInterface集成认证
+  - Files:
+    - `frontend/src/components/chat/ChatInterface.tsx`
+    - `frontend/src/components/layout/TopNavBar.tsx`
+    - `frontend/src/hooks/useAgent.ts`
+  - Display current username in TopNavBar
+  - Add logout button to TopNavBar
+  - Modify useAgent to include Authorization header
+  - Load historical messages on mount
+  - Purpose: 在聊天界面显示用户信息和支持历史加载
+  - _Leverage: useAuth hook, existing ChatInterface_
+  - _Requirements: 14, 1 (Chat Interface)_
+  - _Prompt: Role: Frontend Integration Developer | Task: Integrate authentication into chat interface following requirements 14 and 1, modifying: (1) TopNavBar.tsx to display user.username from useAuth(), add logout icon button calling useAuth().logout(), (2) useAgent.ts to ensure Axios includes Authorization header (should be automatic from AuthContext), add loadHistory() function calling GET /api/agent/history to fetch recent messages, (3) ChatInterface.tsx to call loadHistory() on mount, add messages to ChatContext, (4) handle 401 errors in useAgent to trigger logout, (5) show welcome message with username on first visit | Restrictions: Must display username prominently, logout button should be accessible, load history only once on mount, handle empty history gracefully, clear messages on logout, maintain existing chat functionality | Success: Username is displayed in TopNavBar, logout button works, historical messages load on mount, chat functionality unchanged, 401 triggers logout_
+
+### Integration and Testing
+
+- [ ] 7.9. 创建认证相关API端点测试
+  - Files:
+    - `backend/tests/test_auth_api.py`
+  - Test user registration flow
+  - Test login with correct/wrong credentials
+  - Test token verification
+  - Test protected endpoint access
+  - Purpose: 验证认证系统可靠性
+  - _Leverage: pytest, TestClient_
+  - _Requirements: 14_
+  - _Prompt: Role: QA Engineer specializing in security testing | Task: Create comprehensive authentication tests following requirement 14, testing: (1) POST /auth/register with valid data creates user and returns token, (2) register with duplicate username returns 400, (3) register with invalid password returns 422, (4) POST /auth/login with correct credentials returns token, (5) login with wrong password returns 401, (6) GET /auth/me with valid token returns user info, (7) /auth/me with invalid token returns 401, (8) POST /api/agent/chat without token returns 401, (9) /api/agent/chat with valid token succeeds, using TestClient, mocking database operations | Restrictions: Must test all error cases, verify JWT token structure, check password is hashed (not plaintext), ensure SQL injection prevention, test concurrent registrations | Success: All tests pass, error handling is correct, tokens are valid JWT, passwords are hashed, security vulnerabilities are prevented_
+
+- [ ] 7.10. 端到端认证流程测试
+  - Test complete flow: register → login → chat → logout → login → history loaded
+  - Test multi-user scenario (different users have isolated data)
+  - Test token expiration handling
+  - Test persistence across page refresh
+  - Purpose: 验证完整用户体验
+  - _Leverage: Running application, manual testing_
+  - _Requirements: 14_
+  - _Prompt: Role: QA Engineer with end-to-end testing expertise | Task: Perform comprehensive authentication flow testing following requirement 14, testing: (1) register new user "alice" → auto-login → see chat interface with username, (2) send messages → logout → login as "alice" → see previous messages, (3) register second user "bob" → send different messages → verify alice and bob have separate chat histories, (4) simulate token expiration (modify localStorage to expired token) → any API call redirects to login, (5) login → refresh page → verify still logged in and messages persist, (6) test preference persistence (连续3次闪卡 → logout → login → "化学反应" → verify quiz preference loaded), document any bugs with screenshots | Restrictions: Test with at least 2 users, verify complete data isolation, check all edge cases, test on fresh browser (clear storage), document test steps and results | Success: Complete auth flow works smoothly, data persists correctly, multi-user isolation works, token expiration is handled, page refresh maintains auth state, preferences are loaded from DB_
+
 ## Summary
 
-Total tasks: **34 tasks** organized in 6 phases:
-- **Phase 1**: 5 tasks (Project Setup)
-- **Phase 2**: 11 tasks (Core Modules)
-- **Phase 3**: 5 tasks (Skills Implementation)
-- **Phase 4**: 3 tasks (Agent API Integration)
-- **Phase 5**: 9 tasks (Frontend Implementation)
-- **Phase 6**: 4 tasks (Integration and Testing)
+Total tasks: **44 tasks** organized in 7 phases:
+- **Phase 1**: 5 tasks (Project Setup) ✅
+- **Phase 2**: 11 tasks (Core Modules) ✅
+- **Phase 3**: 5 tasks (Skills Implementation) ✅
+- **Phase 4**: 3 tasks (Agent API Integration) ✅
+- **Phase 5**: 9 tasks (Frontend Implementation) ✅
+- **Phase 6**: 4 tasks (Integration and Testing) ⏳
+- **Phase 7**: 10 tasks (用户认证与持久化) 🆕 ⏳
 
-**Estimated Implementation Time**: 3-5 days (full-time development)
+**Estimated Implementation Time**: 
+- Phases 1-6: 3-5 days ✅
+- Phase 7 (新增): +2-3 days
+- **Total**: 5-8 days (full-time development)
 
 **Dependencies**: Tasks must be completed in order within each phase, but phases can have some parallel work (backend and frontend can progress simultaneously after phase 1).
 

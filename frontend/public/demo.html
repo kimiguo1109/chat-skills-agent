@@ -9,6 +9,9 @@
 <link crossorigin="" href="https://fonts.gstatic.com" rel="preconnect"/>
 <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;700&display=swap" rel="stylesheet"/>
 <link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined" rel="stylesheet"/>
+<!-- Mind Elixir for Mind Map Rendering (Local) -->
+<link rel="stylesheet" href="/node_modules/mind-elixir/dist/MindElixir.css">
+<script type="module" src="/src/mindmap-loader.js"></script>
 <script id="tailwind-config">
       tailwind.config = {
         darkMode: "class",
@@ -420,6 +423,179 @@ function renderLearningBundle(content) {
     return html;
 }
 
+// 渲染 MindMap (思维导图)
+function renderMindMapCard(content) {
+    if (!content.root) {
+        return '<p>思维导图数据格式错误</p>';
+    }
+    
+    // 生成唯一 ID
+    const mindmapId = `mindmap-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+    
+    let html = `
+        <div class="w-full rounded-xl border border-border-light dark:border-border-dark bg-surface-light dark:bg-surface-dark shadow-sm overflow-hidden">
+            <div class="p-4 border-b border-border-light dark:border-border-dark">
+                <div class="flex items-center justify-between">
+                    <div class="flex items-center gap-3">
+                        <span class="material-symbols-outlined text-primary text-2xl">account_tree</span>
+                        <div>
+                            <h3 class="text-lg font-bold text-text-light-primary dark:text-text-dark-primary">${content.subject || '思维导图'} - ${content.topic || ''}</h3>
+                            <p class="text-sm text-slate-500 dark:text-slate-400">${content.structure_summary || ''}</p>
+                        </div>
+                    </div>
+                    <div class="flex items-center gap-2">
+                        <span class="material-symbols-outlined text-sm text-slate-500">edit</span>
+                        <span class="text-xs text-slate-500">可编辑</span>
+                    </div>
+                </div>
+            </div>
+            <div id="${mindmapId}" class="w-full" style="height: 600px; background: #fff;"></div>
+            <div class="p-3 border-t border-border-light dark:border-border-dark bg-slate-50 dark:bg-slate-800">
+                <p class="text-xs text-slate-600 dark:text-slate-400">
+                    💡 提示：右键点击节点可以添加、编辑、删除节点。支持拖拽移动节点位置。按 Tab 添加子节点，Enter 添加兄弟节点。
+                </p>
+            </div>
+        </div>
+    `;
+    
+    // 延迟初始化 Mind Elixir（等待 DOM 插入）
+    setTimeout(() => {
+        initializeMindMap(mindmapId, content);
+    }, 100);
+    
+    return html;
+}
+
+// 初始化思维导图（支持编辑功能）
+function initializeMindMap(containerId, mindmapData) {
+    const container = document.getElementById(containerId);
+    if (!container) {
+        console.error(`容器 ${containerId} 未找到`);
+        return;
+    }
+    
+    if (typeof MindElixir === 'undefined') {
+        console.error('Mind Elixir 库未加载');
+        container.innerHTML = '<p class="p-4 text-red-500">思维导图库加载失败，请刷新页面重试</p>';
+        return;
+    }
+    
+    try {
+        // 转换数据格式为 Mind Elixir 格式
+        const mindElixirData = convertToMindElixirFormat(mindmapData);
+        
+        // 初始化 Mind Elixir（启用编辑功能）
+        const mind = new MindElixir({
+            el: container,
+            direction: MindElixir.SIDE,
+            draggable: true,              // 启用拖拽
+            contextMenu: true,            // 启用右键菜单
+            toolBar: true,                // 启用工具栏（添加、删除节点等）
+            keypress: true,               // 启用快捷键
+            locale: 'zh_CN',
+            allowUndo: true,              // 启用撤销/重做
+            overflowHidden: false,
+            primaryLinkStyle: 2,
+            primaryNodeVerticalGap: 15,
+            primaryNodeHorizontalGap: 65,
+            contextMenuOption: {
+                focus: true,
+                link: true,
+                extend: [
+                    {
+                        name: '添加子节点',
+                        onclick: () => {
+                            mind.addChild();
+                        },
+                    },
+                    {
+                        name: '添加兄弟节点',
+                        onclick: () => {
+                            mind.insertSibling();
+                        },
+                    },
+                    {
+                        name: '编辑节点',
+                        onclick: () => {
+                            mind.beginEdit();
+                        },
+                    },
+                    {
+                        name: '删除节点',
+                        onclick: () => {
+                            mind.removeNode();
+                        },
+                    },
+                ],
+            },
+            before: {
+                insertSibling(el, obj) {
+                    console.log('插入兄弟节点');
+                    return true;
+                },
+                async addChild(el, obj) {
+                    console.log('添加子节点');
+                    return true;
+                },
+            },
+        });
+        
+        // 加载数据
+        mind.init(mindElixirData);
+        
+        // 监听节点变化事件
+        if (mind.bus && typeof mind.bus.addListener === 'function') {
+            mind.bus.addListener('operation', (operation) => {
+                console.log('思维导图操作:', operation.name);
+                // 可以在这里保存到后端
+            });
+            
+            mind.bus.addListener('nodeSelect', (node) => {
+                console.log('选中节点:', node.nodeData.topic);
+            });
+        }
+        
+        console.log('✅ 思维导图渲染成功（支持编辑）:', containerId);
+    } catch (error) {
+        console.error('思维导图渲染失败:', error);
+        container.innerHTML = `<p class="p-4 text-red-500">思维导图渲染失败: ${error.message}</p>`;
+    }
+}
+
+// 将后端数据转换为 Mind Elixir 格式
+function convertToMindElixirFormat(mindmapData) {
+    return {
+        nodeData: {
+            id: mindmapData.root.id,
+            topic: mindmapData.root.text,
+            children: mindmapData.root.children.map(convertMindMapNode),
+            style: {
+                fontSize: '18px',
+                color: mindmapData.root.color || '#10b981',
+                fillColor: '#fff',
+                borderColor: mindmapData.root.color || '#10b981',
+                borderWidth: 2,
+            },
+        },
+    };
+}
+
+// 递归转换节点
+function convertMindMapNode(node) {
+    return {
+        id: node.id,
+        topic: node.text,
+        children: node.children?.map(convertMindMapNode) || [],
+        style: {
+            fontSize: '14px',
+            color: node.color || '#333',
+            fillColor: '#fff',
+            borderColor: node.color || '#ccc',
+            borderWidth: 1,
+        },
+    };
+}
+
 // 添加 Agent 响应
 function addAgentMessage(data) {
     const messagesDiv = document.getElementById('chatMessages').querySelector('.flex.flex-col.gap-6');
@@ -442,6 +618,8 @@ function addAgentMessage(data) {
                 contentHtml += renderFlashcardSet(result.content);
             } else if (result.content_type === 'learning_bundle' && result.content.components) {
                 contentHtml += renderLearningBundle(result.content);
+            } else if (result.content_type === 'mindmap' && result.content.root) {
+                contentHtml += renderMindMapCard(result.content);
             } else {
                 contentHtml += `<pre class="text-xs">${JSON.stringify(result.content, null, 2)}</pre>`;
             }
@@ -460,6 +638,9 @@ function addAgentMessage(data) {
         contentHtml = renderFlashcardSet(data.response_content);
     } else if (data.content_type === 'learning_bundle' && data.response_content.components) {
         contentHtml = renderLearningBundle(data.response_content);
+    } else if (data.content_type === 'mindmap' && data.response_content.root) {
+        // 思维导图渲染
+        contentHtml = renderMindMapCard(data.response_content);
     } else if (data.content_type === 'text' && data.response_content.text) {
         // 文本对话（如 "other" 意图）
         contentHtml = `<p class="text-base font-normal leading-normal rounded-xl rounded-bl-none px-4 py-3 bg-surface-light dark:bg-surface-dark border border-border-light dark:border-border-dark text-text-light-primary dark:text-text-dark-primary whitespace-pre-wrap max-w-2xl">${data.response_content.text}</p>`;

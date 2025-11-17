@@ -40,9 +40,9 @@ OUTPUT FORMAT (JSON only, no other text):
 
 For SINGLE REQUEST, return an object:
 {{
-  "intent": "quiz | explain | flashcard | learning_bundle | other",
+  "intent": "quiz | explain | flashcard | learning_bundle | mindmap | other",
   "topic": "extracted topic or null",
-  "target_artifact": "quiz_set | explanation | flashcard_set | learning_bundle | null",
+  "target_artifact": "quiz_set | explanation | flashcard_set | learning_bundle | mindmap | null",
   "confidence": 0.85,
   "parameters": {{
     "quantity": "extracted number if specified (e.g., '3道题' -> 3, '5张卡' -> 5)",
@@ -78,6 +78,9 @@ EXPLICIT INTENT (respect user's explicit request):
 - "给我5张光合作用的闪卡" → {{"intent": "flashcard", "topic": "生物-光合作用", "target_artifact": "flashcard_set", "confidence": 0.95, "parameters": {{"quantity": 5}}}}
 - "解释一下什么是导数" → {{"intent": "explain", "topic": "微积分-导数", "target_artifact": "explanation", "confidence": 0.90, "parameters": {{}}}}
 - "我想要学习化学反应" → {{"intent": "explain", "topic": "化学反应", "target_artifact": "explanation", "confidence": 0.85, "parameters": {{}}}}
+- "帮我生成一个微积分导数的思维导图" → {{"intent": "mindmap", "topic": "微积分-导数", "target_artifact": "mindmap", "confidence": 0.95, "parameters": {{}}}}
+- "给我画个二战历史的知识图谱" → {{"intent": "mindmap", "topic": "历史-二战", "target_artifact": "mindmap", "confidence": 0.90, "parameters": {{}}}}
+- "帮我整理一下光合作用的知识点" → {{"intent": "mindmap", "topic": "生物-光合作用", "target_artifact": "mindmap", "confidence": 0.85, "parameters": {{}}}}
 
 MIXED REQUESTS (return multiple intents):
 - "给我5道化学题和3张物理闪卡" → {{"intents": [{{"intent": "quiz", "topic": "化学", "target_artifact": "quiz_set", "confidence": 0.90, "parameters": {{"quantity": 5}}}}, {{"intent": "flashcard", "topic": "物理", "target_artifact": "flashcard_set", "confidence": 0.90, "parameters": {{"quantity": 3}}}}]}}

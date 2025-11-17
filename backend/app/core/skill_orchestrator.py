@@ -349,6 +349,8 @@ Please respond with valid JSON according to the output schema defined above.
             content_type = "flashcard_set"
         elif "bundle_id" in result or "components" in result:
             content_type = "learning_bundle"
+        elif "mindmap_id" in result or "root" in result:
+            content_type = "mindmap"
         elif "error" in result:
             content_type = "error"
         

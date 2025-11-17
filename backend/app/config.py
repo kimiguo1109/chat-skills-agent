@@ -12,6 +12,12 @@ class Settings(BaseSettings):
     GEMINI_API_KEY: str
     GEMINI_MODEL: str = "gemini-2.0-flash-exp"
     
+    # OpenAI API 配置（用于 MindMap Skill - 可选）
+    OPENAI_API_KEY: str = ""
+    OPENAI_MODEL: str = "gpt-4o-2024-08-06"
+    OPENAI_BASE_URL: str = "https://api.openai.com/v1"
+    OPENAI_TIMEOUT: float = 30.0
+    
     # AWS S3 配置（用于 demo 阶段存储数据）
     USE_S3_STORAGE: bool = True
     AWS_ACCESS_KEY_ID: str = ""
