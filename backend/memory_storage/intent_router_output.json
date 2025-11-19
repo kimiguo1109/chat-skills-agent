@@ -1,14 +1,14 @@
 {
   "description": "Intent Router 实时输出记录 (Phase 3 架构)",
   "latest": {
-    "timestamp": "2025-11-19T17:06:54.973788",
-    "user_message": "什么是光合作用",
+    "timestamp": "2025-11-19T17:12:55.714754",
+    "user_message": "帮我理解二战的起因",
     "method": "rule_engine",
     "tokens_used": 0,
     "results": [
       {
         "intent": "explain_request",
-        "topic": "光合作用",
+        "topic": "理解二战 起因",
         "confidence": 0.95,
         "parameters": {}
       }
@@ -16,7 +16,7 @@
   },
   "history": [
     {
-      "timestamp": "2025-11-19T17:06:54.973788",
+      "timestamp": "2025-11-19T17:11:02.154882",
       "user_message": "什么是光合作用",
       "method": "rule_engine",
       "tokens_used": 0,
@@ -28,11 +28,25 @@
           "parameters": {}
         }
       ]
+    },
+    {
+      "timestamp": "2025-11-19T17:12:55.714754",
+      "user_message": "帮我理解二战的起因",
+      "method": "rule_engine",
+      "tokens_used": 0,
+      "results": [
+        {
+          "intent": "explain_request",
+          "topic": "理解二战 起因",
+          "confidence": 0.95,
+          "parameters": {}
+        }
+      ]
     }
   ],
   "stats": {
-    "total_requests": 1,
-    "rule_based_success": 1,
+    "total_requests": 2,
+    "rule_based_success": 2,
     "llm_fallback": 0,
     "rule_success_rate": "100.0%"
   }

@@ -1,10 +1,10 @@
 {
   "session_id": "demo-session",
-  "current_topic": "光合作用",
+  "current_topic": "理解二战 起因",
   "recent_intents": [],
   "artifact_history": [],
   "last_artifact_id": null,
   "last_user_message": "",
-  "updated_at": "2025-11-19T17:07:24.751331",
-  "_last_updated": "2025-11-19T17:07:24.751773"
+  "updated_at": "2025-11-19T17:14:33.365085",
+  "_last_updated": "2025-11-19T17:14:33.365581"
 }
