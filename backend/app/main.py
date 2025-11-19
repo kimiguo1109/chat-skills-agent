@@ -87,14 +87,14 @@ async def root():
 
 
 # 在这里注册路由
-from .api import intent, agent
+from .api import intent, agent, history
 
 app.include_router(intent.router)
 app.include_router(agent.router)
+app.include_router(history.router)
 
 # TODO: 在后续任务中添加更多路由
-# from .api import memory, skills
-# app.include_router(memory.router)
+# from .api import skills
 # app.include_router(skills.router)
 
 

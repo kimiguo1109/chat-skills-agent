@@ -884,11 +884,19 @@ intent_keywords = {
     └─────────────────────────┘
     ```
   - **技术方案**:
-    - 前端: 新增 `HistorySidebar.tsx` 组件
-    - API: `GET /api/sessions/{session_id}/artifacts`
-      - 支持分页、筛选、搜索
-    - 状态管理: 缓存已加载的历史记录
-    - 性能优化: 虚拟滚动（大量历史记录）
+    - **前端**: 在 `demo.html` 中实现 Sidebar
+      - 添加左侧 Sidebar 容器（HTML/CSS）
+      - JavaScript 实现历史记录加载和渲染
+      - 支持搜索筛选的交互逻辑
+      - 点击回溯显示在 Chat 区域
+    - **后端**: 新增 API 端点
+      - `GET /api/sessions/{session_id}/artifacts`
+        - 支持分页、筛选、搜索
+        - 返回按日期分组的历史记录
+    - **性能优化**: 
+      - 前端缓存已加载的历史记录
+      - 懒加载（滚动到底部加载更多）
+      - 虚拟滚动（大量历史记录）
 
 ### V3 特性 (规划中)
 

@@ -46,6 +46,284 @@
           0%, 100% { transform: translateY(0); }
           50% { transform: translateY(-4px); }
         }
+        
+        /* ============= Learning History Panel ============= */
+        
+        /* Overlay */
+        .history-overlay {
+          position: fixed;
+          top: 0;
+          left: 0;
+          width: 100%;
+          height: 100%;
+          background: rgba(0, 0, 0, 0.5);
+          z-index: 999;
+          opacity: 0;
+          pointer-events: none;
+          transition: opacity 0.3s ease;
+        }
+        
+        .history-overlay.active {
+          opacity: 1;
+          pointer-events: auto;
+        }
+        
+        /* History Panel */
+        .history-panel {
+          position: fixed;
+          top: 0;
+          right: 0;
+          width: 400px;
+          height: 100vh;
+          background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+          z-index: 1000;
+          transform: translateX(100%);
+          transition: transform 0.3s ease;
+          display: flex;
+          flex-direction: column;
+          box-shadow: -4px 0 16px rgba(0, 0, 0, 0.2);
+        }
+        
+        .history-panel.open {
+          transform: translateX(0);
+        }
+        
+        .history-panel-content {
+          display: flex;
+          flex-direction: column;
+          height: 100%;
+          overflow: hidden;
+        }
+        
+        /* Header */
+        .history-header {
+          display: flex;
+          justify-content: space-between;
+          align-items: center;
+          padding: 20px 24px;
+          border-bottom: 1px solid rgba(255, 255, 255, 0.2);
+          color: white;
+        }
+        
+        .close-btn {
+          background: transparent;
+          border: none;
+          color: white;
+          cursor: pointer;
+          padding: 8px;
+          border-radius: 8px;
+          transition: background 0.2s;
+        }
+        
+        .close-btn:hover {
+          background: rgba(255, 255, 255, 0.2);
+        }
+        
+        /* Search & Filter */
+        .history-search {
+          padding: 16px 20px;
+          border-bottom: 1px solid rgba(255, 255, 255, 0.2);
+        }
+        
+        .search-input {
+          width: 100%;
+          padding: 10px 12px;
+          border: none;
+          border-radius: 8px;
+          background: rgba(255, 255, 255, 0.2);
+          color: white;
+          font-size: 14px;
+          transition: background 0.2s;
+        }
+        
+        .search-input:focus {
+          background: rgba(255, 255, 255, 0.3);
+          outline: none;
+        }
+        
+        .search-input::placeholder {
+          color: rgba(255, 255, 255, 0.6);
+        }
+        
+        .filter-buttons {
+          display: flex;
+          gap: 8px;
+          margin-top: 12px;
+          flex-wrap: wrap;
+        }
+        
+        .filter-btn {
+          padding: 6px 12px;
+          border: 1px solid rgba(255, 255, 255, 0.3);
+          border-radius: 20px;
+          background: transparent;
+          color: white;
+          font-size: 14px;
+          cursor: pointer;
+          transition: all 0.2s;
+        }
+        
+        .filter-btn:hover {
+          background: rgba(255, 255, 255, 0.2);
+        }
+        
+        .filter-btn.active {
+          background: white;
+          color: #667eea;
+          border-color: white;
+        }
+        
+        /* Timeline */
+        .history-timeline {
+          flex: 1;
+          overflow-y: auto;
+          padding: 20px;
+          color: white;
+        }
+        
+        .history-timeline::-webkit-scrollbar {
+          width: 6px;
+        }
+        
+        .history-timeline::-webkit-scrollbar-track {
+          background: rgba(255, 255, 255, 0.1);
+        }
+        
+        .history-timeline::-webkit-scrollbar-thumb {
+          background: rgba(255, 255, 255, 0.3);
+          border-radius: 3px;
+        }
+        
+        .history-timeline::-webkit-scrollbar-thumb:hover {
+          background: rgba(255, 255, 255, 0.5);
+        }
+        
+        /* Loading State */
+        .loading-state {
+          display: flex;
+          flex-direction: column;
+          align-items: center;
+          justify-content: center;
+          padding: 40px 20px;
+          gap: 8px;
+        }
+        
+        .loading-state > div {
+          display: inline-block;
+        }
+        
+        /* Empty State */
+        .empty-state {
+          display: flex;
+          flex-direction: column;
+          align-items: center;
+          justify-content: center;
+          padding: 60px 20px;
+          text-align: center;
+        }
+        
+        .empty-state-icon {
+          font-size: 64px;
+          margin-bottom: 16px;
+          opacity: 0.5;
+        }
+        
+        /* Date Group */
+        .date-group {
+          margin-bottom: 24px;
+        }
+        
+        .date-label {
+          font-size: 14px;
+          font-weight: 600;
+          padding: 8px 0;
+          cursor: pointer;
+          display: flex;
+          align-items: center;
+          user-select: none;
+        }
+        
+        .date-group.collapsed .history-items {
+          display: none;
+        }
+        
+        .history-items {
+          display: flex;
+          flex-direction: column;
+          gap: 8px;
+        }
+        
+        /* History Item */
+        .history-item {
+          display: flex;
+          align-items: flex-start;
+          padding: 12px;
+          background: rgba(255, 255, 255, 0.1);
+          border-radius: 12px;
+          cursor: pointer;
+          transition: all 0.2s;
+        }
+        
+        .history-item:hover {
+          background: rgba(255, 255, 255, 0.2);
+          transform: translateX(-4px);
+        }
+        
+        .item-icon {
+          font-size: 24px;
+          margin-right: 12px;
+          flex-shrink: 0;
+        }
+        
+        .item-content {
+          flex: 1;
+          min-width: 0;
+        }
+        
+        .item-title {
+          font-size: 14px;
+          font-weight: 500;
+          margin-bottom: 4px;
+          white-space: nowrap;
+          overflow: hidden;
+          text-overflow: ellipsis;
+        }
+        
+        .item-meta {
+          display: flex;
+          gap: 12px;
+          font-size: 12px;
+          opacity: 0.8;
+        }
+        
+        /* Load More */
+        .load-more {
+          text-align: center;
+          padding: 16px 0;
+        }
+        
+        .load-more button {
+          background: rgba(255, 255, 255, 0.2);
+          border: 1px solid rgba(255, 255, 255, 0.3);
+          color: white;
+          padding: 8px 24px;
+          border-radius: 20px;
+          cursor: pointer;
+          font-size: 14px;
+          transition: all 0.2s;
+        }
+        
+        .load-more button:hover {
+          background: rgba(255, 255, 255, 0.3);
+        }
+        
+        /* Responsive */
+        @media (max-width: 768px) {
+          .history-panel {
+            width: 100%;
+            max-width: 400px;
+          }
+        }
     </style>
 </head>
 <body class="bg-background-light dark:bg-background-dark font-display text-text-light-primary dark:text-text-dark-primary">
@@ -76,6 +354,11 @@
 <a class="flex items-center gap-3 px-3 py-2 rounded-lg hover:bg-primary/10 transition-colors" href="#">
 <span class="material-symbols-outlined text-xl">functions</span>
 <p class="text-sm font-medium">Integration by Parts</p>
+</a>
+<!-- 🆕 Learning History Link -->
+<a id="historyToggleBtn" class="flex items-center gap-3 px-3 py-2 rounded-lg hover:bg-primary/10 transition-colors cursor-pointer">
+<span class="material-symbols-outlined text-xl">history_edu</span>
+<p class="text-sm font-medium">Learning History</p>
 </a>
 </div>
 </div>
@@ -142,6 +425,52 @@
 </div>
 </div>
 </main>
+
+<!-- 🆕 Learning History Sidebar Panel -->
+<div id="historyPanel" class="history-panel">
+  <div class="history-panel-content">
+    <!-- Header -->
+    <div class="history-header">
+      <h3 class="text-lg font-bold">📚 Learning History</h3>
+      <button id="historyCloseBtn" class="close-btn">
+        <span class="material-symbols-outlined">close</span>
+      </button>
+    </div>
+    
+    <!-- Search & Filter -->
+    <div class="history-search">
+      <input 
+        type="text" 
+        id="historySearch" 
+        placeholder="🔍 Search topics..."
+        class="search-input"
+      />
+      
+      <div class="filter-buttons">
+        <button class="filter-btn active" data-type="all">All</button>
+        <button class="filter-btn" data-type="quiz_set">❓</button>
+        <button class="filter-btn" data-type="flashcard_set">🎴</button>
+        <button class="filter-btn" data-type="notes">📝</button>
+        <button class="filter-btn" data-type="explanation">💡</button>
+        <button class="filter-btn" data-type="mindmap">🗺️</button>
+      </div>
+    </div>
+    
+    <!-- Timeline Content -->
+    <div id="historyTimeline" class="history-timeline">
+      <div class="loading-state">
+        <div class="w-2 h-2 rounded-full bg-primary animate-bounce"></div>
+        <div class="w-2 h-2 rounded-full bg-primary animate-bounce" style="animation-delay: 0.1s"></div>
+        <div class="w-2 h-2 rounded-full bg-primary animate-bounce" style="animation-delay: 0.2s"></div>
+        <p class="text-sm text-text-light-secondary dark:text-text-dark-secondary mt-2">Loading history...</p>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Overlay for history panel -->
+<div id="historyOverlay" class="history-overlay"></div>
+
 </div>
 
 <script>
@@ -1201,6 +1530,360 @@ function showNotification(message, type = 'info') {
         setTimeout(() => notification.remove(), 300);
     }, 3000);
 }
+
+// ============= Learning History功能 =============
+
+// 历史记录状态
+let historyData = {
+  artifacts: [],
+  filteredArtifacts: [],
+  currentFilter: 'all',
+  searchTerm: '',
+  page: 1,
+  hasMore: true,
+  isLoading: false
+};
+
+// 初始化历史记录功能
+function initHistory() {
+  const historyPanel = document.getElementById('historyPanel');
+  const historyOverlay = document.getElementById('historyOverlay');
+  const historyToggleBtn = document.getElementById('historyToggleBtn');
+  const historyCloseBtn = document.getElementById('historyCloseBtn');
+  const historySearch = document.getElementById('historySearch');
+  
+  // 打开面板
+  historyToggleBtn.addEventListener('click', (e) => {
+    e.preventDefault();
+    openHistoryPanel();
+  });
+  
+  // 关闭面板
+  historyCloseBtn.addEventListener('click', closeHistoryPanel);
+  historyOverlay.addEventListener('click', closeHistoryPanel);
+  
+  // 搜索
+  historySearch.addEventListener('input', (e) => {
+    historyData.searchTerm = e.target.value.toLowerCase();
+    filterAndRenderHistory();
+  });
+  
+  // 筛选按钮
+  document.querySelectorAll('#historyPanel .filter-btn').forEach(btn => {
+    btn.addEventListener('click', (e) => {
+      document.querySelectorAll('#historyPanel .filter-btn').forEach(b => b.classList.remove('active'));
+      e.target.classList.add('active');
+      historyData.currentFilter = e.target.dataset.type;
+      filterAndRenderHistory();
+    });
+  });
+  
+  console.log('✅ History initialized');
+}
+
+// 打开历史记录面板
+async function openHistoryPanel() {
+  const historyPanel = document.getElementById('historyPanel');
+  const historyOverlay = document.getElementById('historyOverlay');
+  
+  historyPanel.classList.add('open');
+  historyOverlay.classList.add('active');
+  
+  // 如果还没有加载过数据，则加载
+  if (historyData.artifacts.length === 0 && !historyData.isLoading) {
+    await loadHistory();
+  }
+}
+
+// 关闭历史记录面板
+function closeHistoryPanel() {
+  const historyPanel = document.getElementById('historyPanel');
+  const historyOverlay = document.getElementById('historyOverlay');
+  
+  historyPanel.classList.remove('open');
+  historyOverlay.classList.remove('active');
+}
+
+// 加载历史记录
+async function loadHistory() {
+  if (historyData.isLoading || !historyData.hasMore) return;
+  
+  historyData.isLoading = true;
+  
+  try {
+    const response = await fetch(
+      `${API_BASE}/api/sessions/${SESSION_ID}/artifacts?page=${historyData.page}&limit=50`
+    );
+    
+    if (!response.ok) {
+      throw new Error(`HTTP error! status: ${response.status}`);
+    }
+    
+    const data = await response.json();
+    
+    // 合并新数据
+    historyData.artifacts = [...historyData.artifacts, ...data.artifacts];
+    historyData.hasMore = data.has_more;
+    historyData.page += 1;
+    
+    console.log(`📚 Loaded ${data.artifacts.length} artifacts, total: ${historyData.artifacts.length}`);
+    
+    filterAndRenderHistory();
+  } catch (error) {
+    console.error('❌ Failed to load history:', error);
+    showHistoryError('Failed to load history. Please try again.');
+  } finally {
+    historyData.isLoading = false;
+  }
+}
+
+// 筛选并渲染历史记录
+function filterAndRenderHistory() {
+  let filtered = historyData.artifacts;
+  
+  // 按类型筛选
+  if (historyData.currentFilter !== 'all') {
+    filtered = filtered.filter(item => item.artifact_type === historyData.currentFilter);
+  }
+  
+  // 按搜索词筛选
+  if (historyData.searchTerm) {
+    filtered = filtered.filter(item => 
+      item.topic.toLowerCase().includes(historyData.searchTerm) ||
+      item.summary.toLowerCase().includes(historyData.searchTerm)
+    );
+  }
+  
+  historyData.filteredArtifacts = filtered;
+  renderHistory();
+}
+
+// 渲染历史记录
+function renderHistory() {
+  const timeline = document.getElementById('historyTimeline');
+  
+  // 空状态
+  if (historyData.artifacts.length === 0 && !historyData.isLoading) {
+    timeline.innerHTML = `
+      <div class="empty-state">
+        <div class="empty-state-icon">📚</div>
+        <p class="text-lg font-medium mb-2">No Learning History Yet</p>
+        <p class="text-sm opacity-70">Start learning to see your history here!</p>
+      </div>
+    `;
+    return;
+  }
+  
+  // 无搜索结果
+  if (historyData.filteredArtifacts.length === 0 && !historyData.isLoading) {
+    timeline.innerHTML = `
+      <div class="empty-state">
+        <div class="empty-state-icon">🔍</div>
+        <p class="text-lg font-medium mb-2">No Results Found</p>
+        <p class="text-sm opacity-70">Try a different search term or filter</p>
+      </div>
+    `;
+    return;
+  }
+  
+  // 按日期分组
+  const grouped = groupByDate(historyData.filteredArtifacts);
+  
+  // 生成 HTML
+  let html = '';
+  for (const [label, items] of Object.entries(grouped)) {
+    html += `
+      <div class="date-group">
+        <div class="date-label">${label}</div>
+        <div class="history-items">
+          ${items.map(item => renderHistoryItem(item)).join('')}
+        </div>
+      </div>
+    `;
+  }
+  
+  // 加载更多按钮
+  if (historyData.hasMore && historyData.filteredArtifacts.length > 0) {
+    html += `
+      <div class="load-more">
+        <button onclick="loadHistory()">Load More...</button>
+      </div>
+    `;
+  }
+  
+  timeline.innerHTML = html;
+}
+
+// 渲染单条历史记录
+function renderHistoryItem(item) {
+  const icon = getArtifactIcon(item.artifact_type);
+  const time = formatTime(item.timestamp);
+  const count = getArtifactCount(item);
+  
+  return `
+    <div class="history-item" onclick="viewArtifact('${item.id}')">
+      <div class="item-icon">${icon}</div>
+      <div class="item-content">
+        <div class="item-title">${escapeHtml(item.topic)}</div>
+        <div class="item-meta">
+          <span class="item-time">${time}</span>
+          ${count ? `<span class="item-count">${count}</span>` : ''}
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+// 查看历史记录（回溯）
+async function viewArtifact(artifactId) {
+  try {
+    console.log(`📖 Viewing artifact: ${artifactId}`);
+    
+    // 从本地查找
+    const artifact = historyData.artifacts.find(a => a.id === artifactId);
+    
+    if (!artifact) {
+      console.error('Artifact not found');
+      return;
+    }
+    
+    // 关闭历史面板
+    closeHistoryPanel();
+    
+    // 在 Chat 中添加回溯标签
+    const timestamp = formatDateTime(artifact.timestamp);
+    addSystemMessage(`🔙 [回溯] ${timestamp}`);
+    
+    // 根据类型渲染内容
+    const messageData = {
+      content_type: artifact.artifact_type,
+      response_content: artifact.content
+    };
+    
+    addAgentMessage(messageData);
+    
+    // 添加提示
+    addSystemMessage('💡 你可以基于此内容继续对话，例如："再出3道类似的题"');
+    
+    console.log('✅ Artifact displayed');
+    
+  } catch (error) {
+    console.error('❌ Failed to view artifact:', error);
+    addErrorMessage('Failed to load artifact. Please try again.');
+  }
+}
+
+// 添加系统消息
+function addSystemMessage(text) {
+  const messagesDiv = document.getElementById('chatMessages').querySelector('.flex.flex-col.gap-6');
+  const systemMsg = `
+    <div class="flex items-center justify-center my-4">
+      <div class="px-4 py-2 rounded-full bg-primary/10 text-primary text-sm font-medium">
+        ${text}
+      </div>
+    </div>
+  `;
+  messagesDiv.insertAdjacentHTML('beforeend', systemMsg);
+  scrollToBottom();
+}
+
+// 显示历史记录错误
+function showHistoryError(message) {
+  const timeline = document.getElementById('historyTimeline');
+  timeline.innerHTML = `
+    <div class="empty-state">
+      <div class="empty-state-icon">❌</div>
+      <p class="text-lg font-medium mb-2">Error</p>
+      <p class="text-sm opacity-70">${message}</p>
+    </div>
+  `;
+}
+
+// ============= 辅助函数 =============
+
+// 按日期分组
+function groupByDate(artifacts) {
+  const now = new Date();
+  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  const yesterday = new Date(today - 86400000);
+  const thisWeek = new Date(today - 7 * 86400000);
+  
+  const groups = {
+    '📅 今天': [],
+    '📅 昨天': [],
+    '📅 本周': [],
+    '📅 更早': []
+  };
+  
+  artifacts.forEach(item => {
+    const date = new Date(item.timestamp);
+    if (date >= today) {
+      groups['📅 今天'].push(item);
+    } else if (date >= yesterday) {
+      groups['📅 昨天'].push(item);
+    } else if (date >= thisWeek) {
+      groups['📅 本周'].push(item);
+    } else {
+      groups['📅 更早'].push(item);
+    }
+  });
+  
+  // 移除空分组
+  Object.keys(groups).forEach(key => {
+    if (groups[key].length === 0) {
+      delete groups[key];
+    }
+  });
+  
+  return groups;
+}
+
+// 获取 artifact 图标
+function getArtifactIcon(type) {
+  const icons = {
+    'quiz_set': '❓',
+    'flashcard_set': '🎴',
+    'notes': '📝',
+    'explanation': '💡',
+    'mindmap': '🗺️',
+    'learning_bundle': '📦'
+  };
+  return icons[type] || '📄';
+}
+
+// 获取 artifact 数量
+function getArtifactCount(item) {
+  if (item.artifact_type === 'quiz_set' && item.content.questions) {
+    return `${item.content.questions.length} 题`;
+  } else if (item.artifact_type === 'flashcard_set' && item.content.cards) {
+    return `${item.content.cards.length} 卡`;
+  }
+  return null;
+}
+
+// 格式化时间
+function formatTime(timestamp) {
+  const date = new Date(timestamp);
+  return date.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' });
+}
+
+function formatDateTime(timestamp) {
+  const date = new Date(timestamp);
+  return date.toLocaleString('zh-CN');
+}
+
+// HTML 转义
+function escapeHtml(text) {
+  const div = document.createElement('div');
+  div.textContent = text;
+  return div.innerHTML;
+}
+
+// ============= 页面加载时初始化 =============
+document.addEventListener('DOMContentLoaded', () => {
+  initHistory();
+  console.log('🎉 Page loaded and history initialized');
+});
 
 </script>
 </body>

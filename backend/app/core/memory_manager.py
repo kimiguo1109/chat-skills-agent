@@ -406,4 +406,27 @@ class MemoryManager:
             
         except Exception as e:
             logger.warning(f"⚠️  Failed to save {data_type} to local file: {e}")
+    
+    # ============= Artifact Search =============
+    
+    async def find_artifact_by_id(self, artifact_id: str):
+        """
+        从所有 sessions 中查找指定 ID 的 artifact
+        
+        Args:
+            artifact_id: Artifact ID
+        
+        Returns:
+            ArtifactRecord 或 None
+        """
+        # 遍历所有 session contexts
+        for session_id, session_context in self._session_contexts.items():
+            if session_context.artifact_history:
+                for artifact in session_context.artifact_history:
+                    if artifact.id == artifact_id:
+                        logger.info(f"✅ Found artifact {artifact_id} in session {session_id}")
+                        return artifact
+        
+        logger.warning(f"⚠️  Artifact {artifact_id} not found in any session")
+        return None
 
