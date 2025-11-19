@@ -630,42 +630,56 @@ function createStreamingResponseContainer(responseId) {
     const streamingContainer = `
         <div class="flex items-start gap-3 w-full" id="${responseId}">
             <div class="bg-center bg-no-repeat aspect-square bg-cover rounded-full size-10 shrink-0" style='background-image: url("https://lh3.googleusercontent.com/aida-public/AB6AXuCxe92kEf7gMHjbEHfZQu3F-p4XUO0nyA37zYAuOz7CiVXM_3hgmQ9gTI6zw7siePySKKolumdfXax7FjZ1tuLAnsb5rDYnZjw4LaKpR0MpYWUilv2DSX2VlCD416jAvXmMW3d3TA0MfMgLOkvyyvAqiNcFnqdLIk1LOdKh1Axylm3hUbhf-JtzopMhBhZ5WxEDvTgpGF0E65VLCr805vqY4iosbw4L8Qmm-sViAPSF8dXyszl2XldUnwHCnAakeX7o04PO1S6iwT_m");'></div>
-            <div class="flex flex-1 flex-col gap-1 items-start w-full max-w-4xl">
+            <div class="flex flex-1 flex-col gap-3 items-start w-full max-w-4xl">
                 <p class="text-text-light-secondary dark:text-text-dark-secondary text-sm font-medium">StudyX Agent</p>
                 
                 <!-- 状态指示器 -->
-                <div id="${responseId}-status" class="flex items-center gap-2 text-sm text-text-light-secondary dark:text-text-dark-secondary mb-2">
+                <div id="${responseId}-status" class="flex items-center gap-2 text-sm text-text-light-secondary dark:text-text-dark-secondary">
                     <div class="w-2 h-2 rounded-full bg-primary animate-bounce"></div>
                     <span>正在思考...</span>
                 </div>
                 
-                <!-- 🆕 统一内容区域：思考过程 + 最终结果连续显示 -->
-                <div class="w-full rounded-xl border border-border-light dark:border-border-dark bg-surface-light dark:bg-surface-dark overflow-hidden">
-                    <!-- 思考过程区域（流式追加，灰色背景突出显示） -->
-                    <div id="${responseId}-thinking-section" class="bg-gray-50 dark:bg-gray-900/50 px-6 py-4 border-b border-border-light dark:border-border-dark hidden">
-                        <div class="flex items-center gap-2 mb-3">
-                            <svg class="w-5 h-5 text-primary" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z"></path>
-                            </svg>
-                            <span class="text-sm font-semibold text-text-light-primary dark:text-text-dark-primary">思考过程</span>
+                <!-- 🆕 Plan预览区域（最上面，独立显示） -->
+                <div id="${responseId}-plan-preview" class="w-full hidden"></div>
+                
+                <!-- 思考过程区域（可折叠，带滚动条） -->
+                <div id="${responseId}-thinking-section" class="w-full rounded-xl border border-border-light dark:border-border-dark bg-gray-50 dark:bg-gray-900/50 overflow-hidden hidden">
+                    <details class="group" open>
+                        <summary class="flex items-center justify-between px-4 py-3 cursor-pointer hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors">
+                            <div class="flex items-center gap-2">
+                                <svg class="w-5 h-5 text-primary transition-transform group-open:rotate-90" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"></path>
+                                </svg>
+                                <span class="text-sm font-semibold text-text-light-primary dark:text-text-dark-primary">💭 思考过程</span>
+                            </div>
+                            <button onclick="document.getElementById('${responseId}-thinking-section').classList.add('hidden')" 
+                                    class="text-xs text-text-light-secondary dark:text-text-dark-secondary hover:text-primary px-2 py-1 rounded hover:bg-gray-200 dark:hover:bg-gray-700">
+                                隐藏
+                            </button>
+                        </summary>
+                        <div class="px-4 py-3 border-t border-border-light dark:border-border-dark max-h-96 overflow-y-auto">
+                            <pre id="${responseId}-thinking-content" class="whitespace-pre-wrap text-sm text-text-light-secondary dark:text-text-dark-secondary leading-relaxed"></pre>
                         </div>
-                        <pre id="${responseId}-thinking-content" class="whitespace-pre-wrap text-sm text-text-light-secondary dark:text-text-dark-secondary leading-relaxed"></pre>
-                    </div>
-                    
-                    <!-- 🆕 Content流式显示区域（JSON原始文本，打字机效果） -->
-                    <div id="${responseId}-content-section" class="px-6 py-4 border-b border-border-light dark:border-border-dark hidden">
-                        <div class="flex items-center gap-2 mb-3">
+                    </details>
+                </div>
+                
+                <!-- Content流式显示区域（JSON原始文本） -->
+                <div id="${responseId}-content-section" class="w-full rounded-xl border border-border-light dark:border-border-dark bg-surface-light dark:bg-surface-dark overflow-hidden hidden">
+                    <div class="px-4 py-3 bg-green-50 dark:bg-green-900/20 border-b border-border-light dark:border-border-dark">
+                        <div class="flex items-center gap-2">
                             <svg class="w-5 h-5 text-green-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path>
                             </svg>
-                            <span class="text-sm font-semibold text-green-700 dark:text-green-400">正在编写完整的JSON...</span>
+                            <span class="text-sm font-semibold text-green-700 dark:text-green-400">✍️ 正在编写完整的JSON...</span>
                         </div>
-                        <pre id="${responseId}-content-text" class="whitespace-pre-wrap text-xs font-mono text-text-light-primary dark:text-text-dark-primary bg-gray-50 dark:bg-gray-800 p-3 rounded leading-relaxed overflow-x-auto"></pre>
                     </div>
-                    
-                    <!-- 最终结果区域（格式化的卡片UI） -->
-                    <div id="${responseId}-final" class="hidden"></div>
+                    <div class="px-4 py-3 max-h-96 overflow-y-auto">
+                        <pre id="${responseId}-content-text" class="whitespace-pre-wrap text-xs font-mono text-text-light-primary dark:text-text-dark-primary leading-relaxed"></pre>
+                    </div>
                 </div>
+                
+                <!-- 最终结果区域（格式化的卡片UI） -->
+                <div id="${responseId}-final" class="w-full hidden"></div>
             </div>
         </div>
     `;
@@ -677,6 +691,7 @@ function handleStreamChunk(responseId, data) {
     console.log('[Stream]', data.type, data);
     
     const statusEl = document.getElementById(`${responseId}-status`);
+    const planPreviewEl = document.getElementById(`${responseId}-plan-preview`);
     const thinkingSection = document.getElementById(`${responseId}-thinking-section`);
     const thinkingEl = document.getElementById(`${responseId}-thinking-content`);
     const contentSection = document.getElementById(`${responseId}-content-section`);
@@ -694,11 +709,11 @@ function handleStreamChunk(responseId, data) {
             statusEl.querySelector('span').textContent = `🎓 生成学习包：${data.topic} (${data.total_steps}个步骤)`;
         }
         
-        // 🆕 渲染Plan Preview卡片
-        if (data.steps_preview && data.steps_preview.length > 0 && finalEl) {
+        // 🆕 渲染Plan Preview卡片（在专用区域）
+        if (data.steps_preview && data.steps_preview.length > 0 && planPreviewEl) {
             const previewHtml = renderPlanPreview(data.topic, data.steps_preview, data.total_steps);
-            finalEl.innerHTML = previewHtml;
-            finalEl.classList.remove('hidden'); // 🔧 显示预览卡片！
+            planPreviewEl.innerHTML = previewHtml;
+            planPreviewEl.classList.remove('hidden'); // 🔧 显示预览卡片！
             scrollToBottom();
         }
     }
@@ -728,9 +743,16 @@ function handleStreamChunk(responseId, data) {
             }
         }
         
-        // 如果有之前的thinking/content区域，折叠它们
-        if (thinkingSection && !thinkingSection.classList.contains('hidden')) {
-            // 可选：折叠之前的步骤，或者保留展开
+        // 🆕 重置thinking和content区域（为新步骤准备）
+        if (thinkingEl) {
+            thinkingEl.textContent = '';
+        }
+        if (contentTextEl) {
+            contentTextEl.textContent = '';
+        }
+        // 隐藏之前的content区域
+        if (contentSection) {
+            contentSection.classList.add('hidden');
         }
     }
     else if (data.type === 'step_done') {
