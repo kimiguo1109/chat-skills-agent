@@ -1,8 +1,8 @@
 {
   "description": "Intent Router 实时输出记录 (Phase 3 架构)",
   "latest": {
-    "timestamp": "2025-11-19T14:46:22.815511",
-    "user_message": "什么是DNA",
+    "timestamp": "2025-11-19T14:48:08.173992",
+    "user_message": "解释一下DNA",
     "method": "rule_engine",
     "tokens_used": 0,
     "results": [
@@ -15,22 +15,6 @@
     ]
   },
   "history": [
-    {
-      "timestamp": "2025-11-19T14:21:25.006825",
-      "user_message": "给我5道光合作用的题",
-      "method": "rule_engine",
-      "tokens_used": 0,
-      "results": [
-        {
-          "intent": "quiz_request",
-          "topic": "光合作用",
-          "confidence": 0.95,
-          "parameters": {
-            "quantity": 5
-          }
-        }
-      ]
-    },
     {
       "timestamp": "2025-11-19T14:26:48.498423",
       "user_message": "给我5道光合作用的题",
@@ -170,11 +154,25 @@
           "parameters": {}
         }
       ]
+    },
+    {
+      "timestamp": "2025-11-19T14:48:08.173992",
+      "user_message": "解释一下DNA",
+      "method": "rule_engine",
+      "tokens_used": 0,
+      "results": [
+        {
+          "intent": "explain_request",
+          "topic": "DNA",
+          "confidence": 0.95,
+          "parameters": {}
+        }
+      ]
     }
   ],
   "stats": {
-    "total_requests": 13,
-    "rule_based_success": 13,
+    "total_requests": 14,
+    "rule_based_success": 14,
     "llm_fallback": 0,
     "rule_success_rate": "100.0%"
   }
