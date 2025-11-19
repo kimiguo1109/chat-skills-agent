@@ -101,7 +101,9 @@ class GeminiClient:
                         logger.debug(f"🔍 Content has {parts_count} parts")
                         
                         if not has_parts or not candidate.content.parts:
-                            logger.warning(f"⚠️  Chunk has content but no parts: {candidate.content}")
+                            # 🔧 修复：最后一个chunk可能没有parts，这是正常的
+                            # 它只包含metadata（usage等），继续等待stream完成
+                            logger.debug(f"ℹ️  Chunk has no parts (likely final metadata chunk), skipping")
                             continue
                             
                         for part in candidate.content.parts:

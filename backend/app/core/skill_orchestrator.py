@@ -161,11 +161,41 @@ class SkillOrchestrator:
             except json.JSONDecodeError as e:
                 logger.error(f"❌ Failed to parse JSON: {e}")
                 logger.error(f"Content preview: {json_str[:200]}")
-                yield {
-                    "type": "error",
-                    "message": "生成内容格式错误"
-                }
-                return
+                
+                # 🔧 尝试修复截断的JSON
+                # 策略：添加缺失的闭合符号
+                if "Unterminated string" in str(e) or "Expecting" in str(e):
+                    logger.warning(f"⚠️  JSON appears truncated, attempting to fix...")
+                    
+                    # 尝试添加缺失的 ] 和 }
+                    fixed_attempts = [
+                        json_str + '"}]}}',  # 尝试1: 字符串+数组+对象
+                        json_str + '"]}}',    # 尝试2: 数组+对象
+                        json_str + '}]}}',    # 尝试3: 对象+数组+对象
+                        json_str + '}}',      # 尝试4: 对象
+                        json_str + ']}'       # 尝试5: 数组+对象
+                    ]
+                    
+                    for i, attempt in enumerate(fixed_attempts):
+                        try:
+                            parsed_content = json.loads(attempt)
+                            logger.info(f"✅ JSON fixed and parsed (attempt {i+1})")
+                            break
+                        except:
+                            continue
+                    else:
+                        # 所有尝试都失败
+                        yield {
+                            "type": "error",
+                            "message": "生成内容格式错误（JSON截断）"
+                        }
+                        return
+                else:
+                    yield {
+                        "type": "error",
+                        "message": "生成内容格式错误"
+                    }
+                    return
             
             # Step 7: 更新 memory
             # 更新 current_topic
