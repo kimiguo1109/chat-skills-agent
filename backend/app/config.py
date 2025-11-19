@@ -15,7 +15,7 @@ class Settings(BaseSettings):
     # Kimi (Moonshot AI) API 配置（通过 Novita AI）
     KIMI_API_KEY: str = "sk_RVzD0ExdrmLuQIcvC-UbUekNsbft0dVPiOq5Nh-1Xro"  # Novita AI API Key
     KIMI_BASE_URL: str = "https://api.novita.ai/openai"
-    KIMI_MODEL: str = "moonshotai/kimi-k2-thinking"  # 支持 reasoning 模式
+    KIMI_MODEL: str = "moonshotai/moonshot-v1-8k"  # ⚡⚡ 普通模型（伪思考模式）
     
     # OpenAI API 配置（用于 MindMap Skill - 可选）
     OPENAI_API_KEY: str = ""  # 请从环境变量或 .env 文件中加载
