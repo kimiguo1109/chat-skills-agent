@@ -626,33 +626,31 @@ function createStreamingResponseContainer(responseId) {
     const streamingContainer = `
         <div class="flex items-start gap-3 w-full" id="${responseId}">
             <div class="bg-center bg-no-repeat aspect-square bg-cover rounded-full size-10 shrink-0" style='background-image: url("https://lh3.googleusercontent.com/aida-public/AB6AXuCxe92kEf7gMHjbEHfZQu3F-p4XUO0nyA37zYAuOz7CiVXM_3hgmQ9gTI6zw7siePySKKolumdfXax7FjZ1tuLAnsb5rDYnZjw4LaKpR0MpYWUilv2DSX2VlCD416jAvXmMW3d3TA0MfMgLOkvyyvAqiNcFnqdLIk1LOdKh1Axylm3hUbhf-JtzopMhBhZ5WxEDvTgpGF0E65VLCr805vqY4iosbw4L8Qmm-sViAPSF8dXyszl2XldUnwHCnAakeX7o04PO1S6iwT_m");'></div>
-            <div class="flex flex-1 flex-col gap-1 items-start w-full">
+            <div class="flex flex-1 flex-col gap-1 items-start w-full max-w-4xl">
                 <p class="text-text-light-secondary dark:text-text-dark-secondary text-sm font-medium">StudyX Agent</p>
                 
                 <!-- 状态指示器 -->
                 <div id="${responseId}-status" class="flex items-center gap-2 text-sm text-text-light-secondary dark:text-text-dark-secondary mb-2">
                     <div class="w-2 h-2 rounded-full bg-primary animate-bounce"></div>
-                    <span>正在处理...</span>
+                    <span>正在思考...</span>
                 </div>
                 
-                <!-- 思考过程面板（可折叠，默认展开） -->
-                <details id="${responseId}-thinking-panel" class="w-full max-w-3xl mb-4 border border-border-light dark:border-border-dark rounded-lg overflow-hidden bg-surface-light dark:bg-surface-dark" open>
-                    <summary class="flex items-center justify-between px-4 py-3 cursor-pointer hover:bg-gray-50 dark:hover:bg-gray-800 transition-colors">
-                        <div class="flex items-center gap-2">
+                <!-- 🆕 统一内容区域：思考过程 + 最终结果连续显示 -->
+                <div class="w-full rounded-xl border border-border-light dark:border-border-dark bg-surface-light dark:bg-surface-dark overflow-hidden">
+                    <!-- 思考过程区域（流式追加，灰色背景突出显示） -->
+                    <div id="${responseId}-thinking-section" class="bg-gray-50 dark:bg-gray-900/50 px-6 py-4 border-b border-border-light dark:border-border-dark hidden">
+                        <div class="flex items-center gap-2 mb-3">
                             <svg class="w-5 h-5 text-primary" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"></path>
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z"></path>
                             </svg>
-                            <span class="text-base font-semibold text-text-light-primary dark:text-text-dark-primary">🧠 思考过程</span>
+                            <span class="text-sm font-semibold text-text-light-primary dark:text-text-dark-primary">思考过程</span>
                         </div>
-                        <span class="text-xs text-text-light-secondary dark:text-text-dark-secondary">实时生成中...</span>
-                    </summary>
-                    <div class="px-4 py-3 border-t border-border-light dark:border-border-dark bg-gray-50 dark:bg-gray-900">
-                        <pre id="${responseId}-thinking-content" class="whitespace-pre-wrap text-sm text-text-light-secondary dark:text-text-dark-secondary font-mono leading-relaxed"></pre>
+                        <pre id="${responseId}-thinking-content" class="whitespace-pre-wrap text-sm text-text-light-secondary dark:text-text-dark-secondary leading-relaxed"></pre>
                     </div>
-                </details>
-                
-                <!-- 最终结果容器（初始隐藏） -->
-                <div id="${responseId}-final" class="w-full hidden"></div>
+                    
+                    <!-- 最终结果区域（无缝衔接在思考过程下方） -->
+                    <div id="${responseId}-final" class="hidden"></div>
+                </div>
             </div>
         </div>
     `;
@@ -664,9 +662,9 @@ function handleStreamChunk(responseId, data) {
     console.log('[Stream]', data.type, data);
     
     const statusEl = document.getElementById(`${responseId}-status`);
+    const thinkingSection = document.getElementById(`${responseId}-thinking-section`);
     const thinkingEl = document.getElementById(`${responseId}-thinking-content`);
     const finalEl = document.getElementById(`${responseId}-final`);
-    const thinkingPanel = document.getElementById(`${responseId}-thinking-panel`);
     
     if (data.type === 'status') {
         if (statusEl) {
@@ -675,6 +673,10 @@ function handleStreamChunk(responseId, data) {
     } 
     else if (data.type === 'thinking') {
         // 实时追加思考内容
+        // 首次thinking到达时，显示thinking区域
+        if (thinkingSection && thinkingSection.classList.contains('hidden')) {
+            thinkingSection.classList.remove('hidden');
+        }
         if (thinkingEl) {
             thinkingEl.textContent += data.text;
             scrollToBottom();
@@ -688,38 +690,30 @@ function handleStreamChunk(responseId, data) {
         // 生成完成，渲染最终结果
         if (statusEl) statusEl.remove();
         
-        // 折叠思考面板
-        if (thinkingPanel) {
-            thinkingPanel.removeAttribute('open');
-            const summary = thinkingPanel.querySelector('summary span:last-child');
-            if (summary) summary.textContent = '点击展开';
-        }
-        
-        // 渲染最终内容
+        // 🆕 不再折叠thinking，而是直接在下方显示结果
+        // 渲染最终内容（不包含thinking，因为已经在上方显示了）
         if (finalEl && data.content) {
             finalEl.classList.remove('hidden');
             const contentType = data.content_type;
             
-            // ⚠️ 注意：流式API的thinking是单独传递的，需要注入到content中
-            // 这样现有的渲染函数才能访问到_thinking字段
-            const contentWithThinking = {...data.content, _thinking: data.thinking};
+            // 🆕 不传_thinking字段，因为thinking已在上方灰色区域显示
+            // renderThinkingProcess(undefined)会返回空字符串，不会重复渲染
             
             if (contentType === 'quiz_set' && data.content.questions) {
-                finalEl.innerHTML = renderQuizCard(contentWithThinking);
+                finalEl.innerHTML = renderQuizCard(data.content);
             } else if (contentType === 'explanation' && data.content.concept) {
-                finalEl.innerHTML = renderExplainCard(contentWithThinking);
+                finalEl.innerHTML = renderExplainCard(data.content);
             } else if (contentType === 'flashcard_set' && data.content.cards) {
-                finalEl.innerHTML = renderFlashcardSet(contentWithThinking);
+                finalEl.innerHTML = renderFlashcardSet(data.content);
             } else if (contentType === 'learning_bundle' && data.content.components) {
-                finalEl.innerHTML = renderLearningBundle(contentWithThinking);
+                finalEl.innerHTML = renderLearningBundle(data.content);
             } else if (contentType === 'mindmap' && data.content.root) {
-                finalEl.innerHTML = renderMindMapCard(contentWithThinking);
+                finalEl.innerHTML = renderMindMapCard(data.content);
             } else if (contentType === 'notes' && data.content.structured_notes) {
-                finalEl.innerHTML = renderNotesCard(contentWithThinking);
+                finalEl.innerHTML = renderNotesCard(data.content);
             } else {
                 // 未知类型，显示JSON
-                finalEl.innerHTML = renderThinkingProcess(data.thinking) + 
-                    `<pre class="text-sm">${JSON.stringify(data.content, null, 2)}</pre>`;
+                finalEl.innerHTML = `<div class="p-6"><pre class="text-sm">${JSON.stringify(data.content, null, 2)}</pre></div>`;
             }
         }
         
