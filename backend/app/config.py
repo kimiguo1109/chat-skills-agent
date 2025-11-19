@@ -10,7 +10,7 @@ class Settings(BaseSettings):
     
     # Google Gemini API 配置
     GEMINI_API_KEY: str
-    GEMINI_MODEL: str = "gemini-2.0-flash-exp"
+    GEMINI_MODEL: str = "gemini-2.5-flash"  # ⚠️ 使用支持 thinking 模式的模型
     
     # OpenAI API 配置（用于 MindMap Skill - 可选）
     OPENAI_API_KEY: str = ""  # 请从环境变量或 .env 文件中加载
@@ -19,7 +19,7 @@ class Settings(BaseSettings):
     OPENAI_TIMEOUT: float = 30.0
     
     # AWS S3 配置（用于 demo 阶段存储数据）
-    USE_S3_STORAGE: bool = True
+    USE_S3_STORAGE: bool = False  # ⚠️ 开发环境使用本地存储
     AWS_ACCESS_KEY_ID: str = ""
     AWS_SECRET_ACCESS_KEY: str = ""
     AWS_REGION: str = "us-east-1"

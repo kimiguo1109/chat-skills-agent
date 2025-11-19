@@ -10,13 +10,16 @@ deprecated: true
 deprecated_by: "learning_plan_skill"
 deprecated_reason: "Plan Skill 架构提供更好的内容相关性和质量"
 
-intent_tags:
-  - learning_bundle
-  - learning_bundle_request
-  - study_package
-  - complete_materials
-  - comprehensive_learning
-  - all_in_one
+# ⚠️ intent_tags 已禁用，避免与 learning_plan_skill 冲突
+# 如需使用 learning bundle 功能，请使用 learning_plan_skill
+intent_tags: []
+# intent_tags:
+#   - learning_bundle
+#   - learning_bundle_request
+#   - study_package
+#   - complete_materials
+#   - comprehensive_learning
+#   - all_in_one
 
 input_schema:
   type: object

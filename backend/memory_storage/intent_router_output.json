@@ -1,109 +1,11 @@
 {
   "description": "Intent Router 实时输出记录 (Phase 3 架构)",
-  "latest": {
-    "timestamp": "2025-11-19T15:42:41.031447",
-    "user_message": "给我光合作用的完整学习包",
-    "method": "rule_engine",
-    "tokens_used": 0,
-    "results": [
-      {
-        "intent": "learning_bundle",
-        "topic": "光合作用 完整",
-        "confidence": 0.95,
-        "parameters": {}
-      }
-    ]
-  },
-  "history": [
-    {
-      "timestamp": "2025-11-19T15:21:38.447502",
-      "user_message": "什么是光合作用",
-      "method": "rule_engine",
-      "tokens_used": 0,
-      "results": [
-        {
-          "intent": "explain_request",
-          "topic": "光合作用",
-          "confidence": 0.95,
-          "parameters": {}
-        }
-      ]
-    },
-    {
-      "timestamp": "2025-11-19T15:24:59.266358",
-      "user_message": "什么是光合作用",
-      "method": "rule_engine",
-      "tokens_used": 0,
-      "results": [
-        {
-          "intent": "explain_request",
-          "topic": "光合作用",
-          "confidence": 0.95,
-          "parameters": {}
-        }
-      ]
-    },
-    {
-      "timestamp": "2025-11-19T15:28:48.906702",
-      "user_message": "给我几道微积分练习题",
-      "method": "rule_engine",
-      "tokens_used": 0,
-      "results": [
-        {
-          "intent": "quiz_request",
-          "topic": "微积分",
-          "confidence": 0.95,
-          "parameters": {}
-        }
-      ]
-    },
-    {
-      "timestamp": "2025-11-19T15:29:38.176244",
-      "user_message": "什么是光合作用",
-      "method": "rule_engine",
-      "tokens_used": 0,
-      "results": [
-        {
-          "intent": "explain_request",
-          "topic": "光合作用",
-          "confidence": 0.95,
-          "parameters": {}
-        }
-      ]
-    },
-    {
-      "timestamp": "2025-11-19T15:31:29.334325",
-      "user_message": "什么是光合作用",
-      "method": "rule_engine",
-      "tokens_used": 0,
-      "results": [
-        {
-          "intent": "explain_request",
-          "topic": "光合作用",
-          "confidence": 0.95,
-          "parameters": {}
-        }
-      ]
-    },
-    {
-      "timestamp": "2025-11-19T15:42:41.031447",
-      "user_message": "给我光合作用的完整学习包",
-      "method": "rule_engine",
-      "tokens_used": 0,
-      "results": [
-        {
-          "intent": "learning_bundle",
-          "topic": "光合作用 完整",
-          "confidence": 0.95,
-          "parameters": {}
-        }
-      ]
-    }
-  ],
+  "latest": {},
+  "history": [],
   "stats": {
-    "total_requests": 6,
-    "rule_based_success": 6,
+    "total_requests": 0,
+    "rule_based_success": 0,
     "llm_fallback": 0,
-    "rule_success_rate": "100.0%"
+    "rule_success_rate": "0.0%"
   }
 }

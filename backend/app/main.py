@@ -80,9 +80,9 @@ async def lifespan(app: FastAPI):
     logger.info(f"💾 S3 Storage: {'Enabled' if settings.USE_S3_STORAGE else 'Disabled'}")
     
     # 🆕 重启时自动清理 memory 和 intent router 数据
-    if not settings.USE_S3_STORAGE:
-        logger.info("🧹 Resetting local storage on startup...")
-        reset_storage_files()
+    # ⚠️ 开发环境下总是清理（即使S3 enabled，本地也可能有缓存文件）
+    logger.info("🧹 Resetting local storage on startup...")
+    reset_storage_files()
     
     if settings.USE_S3_STORAGE:
         logger.info(f"🗂️  S3 Bucket: {settings.AWS_S3_BUCKET}")
