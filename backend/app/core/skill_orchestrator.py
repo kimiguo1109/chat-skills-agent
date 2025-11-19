@@ -265,6 +265,17 @@ class SkillOrchestrator:
         
         logger.info(f"📦 Selected skill: {skill.id} ({skill.display_name})")
         
+        # 🆕 Step 1.5: 检查是否为 Plan Skill
+        if skill.config.get("skill_type") == "plan":
+            logger.info(f"🎯 Detected Plan Skill: {skill.id}")
+            return await self._execute_plan_skill(
+                skill=skill,
+                intent_result=intent_result,
+                user_id=user_id,
+                session_id=session_id,
+                additional_params=additional_params
+            )
+        
         # Step 2: 获取上下文
         context = await self._build_context(skill, user_id, session_id)
         
@@ -646,6 +657,128 @@ class SkillOrchestrator:
         # 4. 没找到，返回None
         logger.warning(f"⚠️  Keyword '{keyword}' not found in content")
         return None
+    
+    async def _execute_plan_skill(
+        self,
+        skill: SkillDefinition,
+        intent_result: IntentResult,
+        user_id: str,
+        session_id: str,
+        additional_params: Optional[Dict[str, Any]] = None
+    ) -> Dict[str, Any]:
+        """
+        执行 Plan Skill（串联调用多个 skills）
+        
+        Args:
+            skill: Plan Skill 定义
+            intent_result: 意图结果
+            user_id: 用户 ID
+            session_id: 会话 ID
+            additional_params: 额外参数
+        
+        Returns:
+            学习包结果
+        """
+        from .plan_skill_executor import PlanSkillExecutor
+        
+        logger.info(f"\n{'='*70}")
+        logger.info(f"🎯 开始执行 Plan Skill: {skill.id}")
+        logger.info(f"{'='*70}\n")
+        
+        # 获取用户画像和会话上下文
+        user_profile = await self.memory_manager.get_user_profile(user_id)
+        session_context = await self.memory_manager.get_session_context(session_id)
+        
+        # 构建用户输入
+        user_input = {
+            "subject": intent_result.parameters.get("subject") if intent_result.parameters else None,
+            "topic": intent_result.topic,
+            "difficulty": intent_result.parameters.get("difficulty", "medium") if intent_result.parameters else "medium",
+            "memory_summary": self._format_memory_summary(user_profile, session_context)
+        }
+        
+        # 如果 subject 为空，尝试从 topic 中提取
+        if not user_input["subject"] and intent_result.topic:
+            # 简单提取：假设 topic 可能包含学科信息
+            user_input["subject"] = "通用"
+        
+        # 创建 Plan Skill 执行器
+        executor = PlanSkillExecutor(skill_orchestrator=self)
+        
+        # 执行计划
+        try:
+            bundle = await executor.execute_plan(
+                plan_config=skill.config,
+                user_input=user_input,
+                user_profile=user_profile,
+                session_context=session_context
+            )
+            
+            # 封装输出
+            output = {
+                "skill_id": skill.id,
+                "content_type": "learning_bundle",
+                "response_content": bundle,
+                "intent": intent_result.intent
+            }
+            
+            # 更新记忆（保存学习包到 artifact_history）
+            await self._update_memory(user_id, session_id, intent_result, bundle)
+            
+            logger.info(f"✅ Plan Skill 执行完成: {skill.id}")
+            
+            return output
+            
+        except Exception as e:
+            logger.error(f"❌ Plan Skill 执行失败: {e}")
+            logger.exception(e)
+            return self._create_error_response(
+                "plan_execution_error",
+                f"学习包生成失败: {str(e)}"
+            )
+    
+    async def _execute_single_skill(
+        self,
+        skill_id: str,
+        input_params: Dict[str, Any],
+        user_profile: Any,
+        session_context: Any
+    ) -> Dict[str, Any]:
+        """
+        执行单个 skill（供 PlanSkillExecutor 调用）
+        
+        Args:
+            skill_id: Skill ID
+            input_params: 输入参数
+            user_profile: 用户画像
+            session_context: 会话上下文
+        
+        Returns:
+            Skill 执行结果
+        """
+        # 从 registry 获取 skill
+        skill = None
+        for s in self.skill_registry.skills:
+            if s.id == skill_id:
+                skill = s
+                break
+        
+        if not skill:
+            raise ValueError(f"Skill not found: {skill_id}")
+        
+        # 构建上下文
+        context = {
+            "user_profile": user_profile,
+            "session_context": session_context
+        }
+        
+        # 执行 skill
+        result_json = await self._execute_skill(skill, input_params, context)
+        
+        # 解析结果
+        result = json.loads(result_json) if isinstance(result_json, str) else result_json
+        
+        return result
     
     async def _execute_skill(
         self,

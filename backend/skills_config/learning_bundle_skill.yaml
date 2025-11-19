@@ -1,7 +1,14 @@
+# ⚠️ DEPRECATED: 此 skill 已被 learning_plan_skill 替代
+# 请使用 learning_plan_skill.yaml（Plan Skill 架构）
+# 原因：Plan Skill 通过串联调用实现更好的内容相关性和质量
+
 id: learning_bundle_skill
-display_name: 学习包生成
-description: 根据学习主题自动生成完整的学习资料包，包括概念讲解、练习题、抽认卡等多种学习材料
+display_name: 学习包生成 (DEPRECATED)
+description: ⚠️ 已弃用 - 请使用 learning_plan_skill。根据学习主题自动生成完整的学习资料包，包括概念讲解、练习题、抽认卡等多种学习材料
 version: "1.0.0"
+deprecated: true
+deprecated_by: "learning_plan_skill"
+deprecated_reason: "Plan Skill 架构提供更好的内容相关性和质量"
 
 intent_tags:
   - learning_bundle

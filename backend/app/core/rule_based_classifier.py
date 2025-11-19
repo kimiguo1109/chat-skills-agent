@@ -53,7 +53,19 @@ class RuleBasedIntentClassifier:
                 "confidence": 0.95
             },
             "learning_bundle": {
-                "keywords": ["学习包", "学习资料", "学习材料", "学习内容", "全面学习", "一站式学习", "综合学习"],
+                "keywords": [
+                    # 直接请求学习包
+                    "学习包", "学习资料", "学习材料", "学习内容",
+                    # 综合学习类
+                    "全面学习", "一站式学习", "综合学习", "完整学习", "系统学习",
+                    # 学习套餐类
+                    "学习套餐", "学习方案", "学习计划", "学习攻略",
+                    # 英文表达
+                    "learning bundle", "study package", "learning package",
+                    # 口语化表达
+                    "给我全套", "来个全套", "全部资料", "所有材料", "完整资料",
+                    "帮我准备", "全面准备"
+                ],
                 "intent": "learning_bundle",
                 "confidence": 0.95
             },

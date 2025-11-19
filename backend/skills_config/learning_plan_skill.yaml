@@ -1,0 +1,211 @@
+# ============================================================
+# Learning Plan Skill - 学习包规划器 (Plan Skill)
+# ============================================================
+# 通过串联调用多个专门 skill 生成完整学习包
+# 替代原有的 learning_bundle_skill，使用 Plan 架构
+# ============================================================
+
+id: learning_plan_skill
+display_name: 学习包规划器 (Plan Skill)
+description: 通过串联调用 explain_skill, flashcard_skill, quiz_skill 生成完整学习包
+version: "2.0.0"
+skill_type: plan  # 🆕 标记为 Plan Skill
+
+# Intent 标签（规则引擎使用）
+intent_tags:
+  - learning_bundle
+  - learning_bundle_request
+  - study_package
+  - complete_materials
+  - comprehensive_learning
+
+# ============= 输入 Schema =============
+input_schema:
+  type: object
+  properties:
+    subject:
+      type: string
+      description: "学科（如：数学、物理、历史、生物）"
+    topic:
+      type: string
+      description: "具体主题"
+    difficulty:
+      type: string
+      enum: ["easy", "medium", "hard"]
+      description: "整体难度级别"
+      default: "medium"
+    memory_summary:
+      type: string
+      description: "用户学习画像摘要"
+  required:
+    - topic
+
+# ============= 执行计划定义 =============
+execution_plan:
+  strategy: sequential  # 严格串联执行
+  
+  steps:
+    # ============= Step 1: 概念讲解 (基础) =============
+    - step_id: "explain"
+      skill_id: "explain_skill"
+      display_name: "概念讲解"
+      order: 1
+      depends_on: []  # 无依赖，第一个执行
+      
+      input_mapping:
+        # 从用户输入映射
+        subject: "{input.subject}"
+        topic: "{input.topic}"
+        difficulty: "{input.difficulty}"
+        memory_summary: "{input.memory_summary}"
+      
+      # 🔥 上下文提取配置
+      context_extraction:
+        strategy: "key_points"
+        fields:
+          - "concept"          # 概念名称
+          - "examples"         # 例子列表
+          - "related_concepts" # 相关概念
+        max_tokens: 400
+        
+        # 自定义提取逻辑（可选）
+        custom_extraction:
+          # 提取核心知识点
+          key_terms: "extract_from:formal_definition,why_it_matters"
+          # 提取例子摘要
+          example_summary: "summarize:examples[].example"
+    
+    # ============= Step 2: 抽认卡 (依赖讲解) =============
+    - step_id: "flashcard"
+      skill_id: "flashcard_skill"
+      display_name: "知识点抽认卡"
+      order: 2
+      depends_on: ["explain"]  # 依赖 Step 1
+      
+      input_mapping:
+        subject: "{input.subject}"
+        topic: "{input.topic}"
+        quantity: 5
+        difficulty: "{input.difficulty}"
+        # 🔥 从 explain step 提取的上下文注入
+        source_content: "{context.explain.related_concepts}"
+      
+      context_extraction:
+        strategy: "summary"
+        fields:
+          - "card_count"
+        max_tokens: 100
+    
+    # ============= Step 3: 练习题 (依赖讲解) =============
+    - step_id: "quiz"
+      skill_id: "quiz_skill"
+      display_name: "练习题"
+      order: 3
+      depends_on: ["explain"]  # 依赖 Step 1
+      
+      input_mapping:
+        subject: "{input.subject}"
+        topic: "{input.topic}"
+        quantity: 3
+        difficulty: "{input.difficulty}"
+        # 🔥 从 explain step 提取例子作为题目基础
+        source_content: "{context.explain.example_summary}"
+      
+      context_extraction:
+        strategy: "summary"
+        fields:
+          - "question_count"
+        max_tokens: 100
+
+# ============= 结果聚合配置 =============
+aggregation:
+  output_format: "learning_bundle"
+  
+  # 组装规则
+  assembly:
+    bundle_id_pattern: "bundle_{subject}_{topic}_{timestamp}"
+    
+    components:
+      - step_id: "explain"
+        component_type: "explanation"
+      - step_id: "flashcard"
+        component_type: "flashcard"
+      - step_id: "quiz"
+        component_type: "quiz"
+    
+    # 学习路径模板
+    learning_path_template:
+      - "1. 阅读概念讲解（15分钟）- 理解核心概念和原理"
+      - "2. 使用抽认卡记忆（15分钟）- 记住关键知识点"
+      - "3. 完成练习题（15分钟）- 测试理解程度和应用能力"
+      - "4. 复习错题和难点 - 针对薄弱环节加强学习"
+    
+    # 总时长计算（从各 step 累加）
+    total_time_calculation: "sum"  # 自动累加各 component 的时间
+
+# ============= 成本控制 =============
+cost_control:
+  max_total_tokens: 8000  # 整个 plan 的 token 上限
+  context_pruning: true   # 启用上下文卸载
+  
+  pruning_strategy:
+    method: "extract_key_points"  # 提取关键点
+    compression_ratio: 0.2        # 压缩到 20%
+  
+  # Token 监控
+  monitoring:
+    log_per_step: true
+    log_context_size: true
+    alert_threshold: 7000
+
+# ============= 错误处理 =============
+error_handling:
+  on_step_failure:
+    strategy: "skip_and_continue"  # 跳过失败的 step，继续执行
+    fallback_message: "该组件生成失败，已跳过"
+  
+  min_required_steps: 1  # 至少成功 1 个 step 才返回结果
+  
+  # 回退策略
+  fallback:
+    # 如果所有 steps 都失败，返回错误信息
+    on_total_failure:
+      message: "学习包生成失败，请稍后重试或尝试更具体的主题"
+
+# ============= AI Model 配置 =============
+# Plan Skill 本身不直接调用 LLM，但子 skills 会使用各自的配置
+models:
+  # 用于可能的动态规划功能（未来扩展）
+  planner_model: "gemini-2.0-flash-exp"
+
+# ============= Context 需求 =============
+context:
+  need_user_memory: true
+  need_content_store: false
+
+# ============= 元数据 =============
+metadata:
+  author: "StudyX Skill Agent Team"
+  created_at: "2025-01-19"
+  updated_at: "2025-01-19"
+  tags: ["plan", "orchestration", "multi-skill", "cost-optimized", "sequential"]
+  replaces: "learning_bundle_skill"  # 标记替代的旧 skill
+  is_composite: true
+  sub_skills: ["explain_skill", "quiz_skill", "flashcard_skill"]
+  
+  # 优势说明
+  advantages:
+    - "串联执行保证内容相关性"
+    - "专门 skill 保证生成质量"
+    - "上下文管理优化 token 消耗"
+    - "灵活的错误处理机制"
+    - "可维护性和扩展性强"
+
+# ============= 开发注释 =============
+# 设计理念：
+# 1. Plan Skill 不直接生成内容，而是编排其他 skills
+# 2. 通过 depends_on 确保执行顺序和内容相关性
+# 3. context_extraction 和 context_injection 实现上下文传递
+# 4. 上下文卸载（pruning）减少 token 消耗
+# 5. 串联执行保证 explain -> flashcard -> quiz 的知识连贯性
+
