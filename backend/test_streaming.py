@@ -21,11 +21,14 @@ async def test_gemini_stream():
     
     client = GeminiClient()
     
-    prompt = """请生成5道关于光合作用的选择题，以JSON格式返回。
+    prompt = """请生成5道关于光合作用的选择题。
+
+在思考后，必须输出完整的JSON格式内容。
 
 要求的JSON格式：
 {
   "quiz_set_id": "quiz_biology_001",
+  "topic": "光合作用",
   "questions": [
     {
       "question_text": "题目",
@@ -35,6 +38,8 @@ async def test_gemini_stream():
     }
   ]
 }
+
+请在思考完毕后，立即输出上述JSON格式的内容。不要只输出思考过程。
 """
     
     print("📝 Prompt:", prompt[:100] + "...")
@@ -46,7 +51,7 @@ async def test_gemini_stream():
     try:
         async for chunk in client.generate_stream(
             prompt=prompt,
-            thinking_budget=512
+            thinking_budget=256  # 🔧 降低thinking预算，确保有内容输出
         ):
             chunk_type = chunk['type']
             

@@ -157,7 +157,11 @@ class SkillOrchestrator:
                 )
             
             # 添加到 artifact history
-            artifact_type = skill.output_schema.get("artifact_type", "unknown")
+            # 🔧 修复：output_schema可能为None
+            artifact_type = "unknown"
+            if skill.output_schema and isinstance(skill.output_schema, dict):
+                artifact_type = skill.output_schema.get("artifact_type", "unknown")
+            
             await self.memory_manager.add_artifact(
                 session_id=session_id,
                 artifact_type=artifact_type,

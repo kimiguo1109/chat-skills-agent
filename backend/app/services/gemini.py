@@ -92,7 +92,11 @@ class GeminiClient:
                 if hasattr(chunk, 'candidates') and chunk.candidates:
                     candidate = chunk.candidates[0]
                     
-                    if hasattr(candidate, 'content') and hasattr(candidate.content, 'parts'):
+                    if hasattr(candidate, 'content') and candidate.content:
+                        if not hasattr(candidate.content, 'parts') or not candidate.content.parts:
+                            logger.warning(f"⚠️  Chunk has content but no parts: {candidate.content}")
+                            continue
+                            
                         for part in candidate.content.parts:
                             # 🔧 修复：正确区分thinking和content
                             # Gemini API: 当有thought属性时，表示这是thinking部分
