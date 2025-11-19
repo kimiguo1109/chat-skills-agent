@@ -116,9 +116,12 @@ class GeminiClient:
                             thought = getattr(part, 'thought', None)
                             text = getattr(part, 'text', None)
                             
+                            # 🔍 调试日志
+                            logger.debug(f"🔍 Part - has_thought: {has_thought_attr}, thought type: {type(thought)}, thought value: {thought}, text preview: {text[:50] if text else None}")
+                            
                             if isinstance(thought, str) and thought:
                                 # thought是非空字符串，这是纯thinking内容
-                                logger.debug(f"🧠 Found pure thinking part: {len(thought)} chars")
+                                logger.info(f"🧠 Thinking chunk: {len(thought)} chars, preview: {thought[:50]}")
                                 thinking_accumulated.append(thought)
                                 yield {
                                     "type": "thinking",
@@ -126,14 +129,25 @@ class GeminiClient:
                                     "accumulated": "".join(thinking_accumulated)
                                 }
                             elif text:
-                                # 有text内容，这是实际输出（即使thought=True也算content）
-                                logger.info(f"📝 Content chunk: {len(text)} chars, preview: {text[:50]}")
-                                content_accumulated.append(text)
-                                yield {
-                                    "type": "content",
-                                    "text": text,
-                                    "accumulated": "".join(content_accumulated)
-                                }
+                                # 🔍 检查text是否是markdown thinking（以**开头）
+                                if text.strip().startswith('**') and not text.strip().startswith('```'):
+                                    # 这是markdown格式的thinking内容
+                                    logger.info(f"🧠 Thinking chunk (from text): {len(text)} chars, preview: {text[:50]}")
+                                    thinking_accumulated.append(text)
+                                    yield {
+                                        "type": "thinking",
+                                        "text": text,
+                                        "accumulated": "".join(thinking_accumulated)
+                                    }
+                                else:
+                                    # 有text内容，这是实际输出
+                                    logger.info(f"📝 Content chunk: {len(text)} chars, preview: {text[:50]}")
+                                    content_accumulated.append(text)
+                                    yield {
+                                        "type": "content",
+                                        "text": text,
+                                        "accumulated": "".join(content_accumulated)
+                                    }
             
             # 完成标记
             yield {
