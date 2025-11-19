@@ -8,9 +8,14 @@ from typing import List
 class Settings(BaseSettings):
     """应用配置类"""
     
-    # Google Gemini API 配置
-    GEMINI_API_KEY: str
-    GEMINI_MODEL: str = "gemini-2.5-flash"  # ⚠️ 使用支持 thinking 模式的模型
+    # Google Gemini API 配置（已弃用，迁移到 Kimi）
+    GEMINI_API_KEY: str = ""
+    GEMINI_MODEL: str = "gemini-2.5-flash"
+    
+    # Kimi (Moonshot AI) API 配置（通过 Novita AI）
+    KIMI_API_KEY: str = "sk-897e62d8f0fb482aa2c88ef2df2f38dc"  # Novita AI API Key
+    KIMI_BASE_URL: str = "https://api.novita.ai/openai"
+    KIMI_MODEL: str = "moonshotai/kimi-k2-thinking"  # 支持 reasoning 模式
     
     # OpenAI API 配置（用于 MindMap Skill - 可选）
     OPENAI_API_KEY: str = ""  # 请从环境变量或 .env 文件中加载

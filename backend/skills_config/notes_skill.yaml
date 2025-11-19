@@ -49,8 +49,8 @@ output_schema:
     - structured_notes
 
 models:
-  primary: "gemini-2.5-flash"  # 🆕 使用 2.5 Flash 支持思考模型
-  fallback: "gemini-2.5-flash"
+  primary: "moonshotai/kimi-k2-thinking"  # 🆕 使用 2.5 Flash 支持思考模型
+  fallback: "moonshotai/kimi-k2-thinking"
 
 thinking_budget: 1024  # 🆕 思考预算，0-24576 (0=无思考, 1024=中等, 更高=深度思考)
 

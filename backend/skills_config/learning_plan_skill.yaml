@@ -199,8 +199,8 @@ models:
   # 用于可能的动态规划功能（未来扩展）
   # ⚠️ 注意：即使配置了model，Plan Skill本身不应该直接调用LLM
   # 如果意外调用，使用支持thinking的模型
-  primary: "gemini-2.5-flash"
-  fallback: "gemini-2.5-flash"
+  primary: "moonshotai/kimi-k2-thinking"
+  fallback: "moonshotai/kimi-k2-thinking"
 
 # ⚠️ 注意：没有 thinking_budget 配置
 # 原因：Plan Skill只编排sub-skills，不直接生成内容
