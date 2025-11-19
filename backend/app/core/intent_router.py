@@ -62,12 +62,8 @@ class IntentRouter:
         
         self.prompt_template = self._load_prompt_template()
         
-        # 统计数据
-        self.stats = {
-            "total_requests": 0,
-            "rule_based_success": 0,
-            "llm_fallback": 0
-        }
+        # 统计数据 - 从文件加载历史统计
+        self.stats = self._load_stats_from_file()
         
         # 确保保存目录存在
         if self.save_output:
@@ -91,6 +87,30 @@ class IntentRouter:
         except FileNotFoundError:
             logger.error(f"❌ Prompt template not found: {self.PROMPT_TEMPLATE_PATH}")
             raise
+    
+    def _load_stats_from_file(self) -> Dict[str, int]:
+        """从文件加载历史统计数据"""
+        try:
+            if self.INTENT_OUTPUT_PATH.exists():
+                with open(self.INTENT_OUTPUT_PATH, 'r', encoding='utf-8') as f:
+                    data = json.load(f)
+                    if "stats" in data:
+                        stats = data["stats"]
+                        # 提取数值（去掉百分号等）
+                        return {
+                            "total_requests": stats.get("total_requests", 0),
+                            "rule_based_success": stats.get("rule_based_success", 0),
+                            "llm_fallback": stats.get("llm_fallback", 0)
+                        }
+        except Exception as e:
+            logger.warning(f"⚠️  Failed to load stats from file: {e}")
+        
+        # 默认值
+        return {
+            "total_requests": 0,
+            "rule_based_success": 0,
+            "llm_fallback": 0
+        }
     
     def _save_intent_output(
         self,

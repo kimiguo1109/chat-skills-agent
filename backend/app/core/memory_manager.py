@@ -41,6 +41,10 @@ class MemoryManager:
         )
         os.makedirs(self.local_storage_dir, exist_ok=True)
         logger.info(f"✅ MemoryManager initialized (S3: {self.use_s3}, Local: {self.local_storage_dir})")
+        
+        # 🆕 从本地文件加载现有数据（用于开发调试）
+        if not self.use_s3:
+            self._load_from_local_files()
     
     # ============= User Learning Profile =============
     
@@ -423,10 +427,56 @@ class MemoryManager:
         for session_id, session_context in self._session_contexts.items():
             if session_context.artifact_history:
                 for artifact in session_context.artifact_history:
-                    if artifact.id == artifact_id:
+                    if artifact.artifact_id == artifact_id:
                         logger.info(f"✅ Found artifact {artifact_id} in session {session_id}")
                         return artifact
         
         logger.warning(f"⚠️  Artifact {artifact_id} not found in any session")
         return None
+    
+    # ============= Local File Loading =============
+    
+    def _load_from_local_files(self):
+        """从本地文件加载已存储的 session contexts（用于开发调试）"""
+        try:
+            # 扫描 memory_storage 目录中的 session 文件
+            import glob
+            session_files = glob.glob(os.path.join(self.local_storage_dir, "*-session.json"))
+            
+            loaded_count = 0
+            for filepath in session_files:
+                try:
+                    with open(filepath, 'r', encoding='utf-8') as f:
+                        data = json.load(f)
+                    
+                    # 提取 session_id
+                    session_id = data.get("session_id")
+                    if not session_id:
+                        continue
+                    
+                    # 转换 artifact_history 中的 datetime 字符串
+                    if "artifact_history" in data and data["artifact_history"]:
+                        for artifact in data["artifact_history"]:
+                            if "timestamp" in artifact and isinstance(artifact["timestamp"], str):
+                                artifact["timestamp"] = datetime.fromisoformat(artifact["timestamp"])
+                    
+                    # 转换 updated_at
+                    if "updated_at" in data and isinstance(data["updated_at"], str):
+                        data["updated_at"] = datetime.fromisoformat(data["updated_at"])
+                    
+                    # 创建 SessionContext 对象
+                    session_context = SessionContext(**data)
+                    self._session_contexts[session_id] = session_context
+                    loaded_count += 1
+                    
+                    logger.info(f"📂 Loaded session {session_id} with {len(session_context.artifact_history)} artifacts")
+                    
+                except Exception as e:
+                    logger.warning(f"⚠️  Failed to load {filepath}: {e}")
+            
+            if loaded_count > 0:
+                logger.info(f"✅ Loaded {loaded_count} session(s) from local files")
+            
+        except Exception as e:
+            logger.warning(f"⚠️  Failed to load from local files: {e}")
 

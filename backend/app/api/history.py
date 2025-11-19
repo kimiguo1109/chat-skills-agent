@@ -7,12 +7,9 @@ from typing import Optional, List, Dict, Any
 from datetime import datetime
 from pydantic import BaseModel
 
-from app.core.memory_manager import MemoryManager
+from app.dependencies import memory_manager
 
 router = APIRouter()
-
-# 全局 Memory Manager 实例（从 agent.py 导入或共享）
-memory_manager = MemoryManager()
 
 
 class ArtifactResponse(BaseModel):
@@ -84,11 +81,11 @@ async def get_artifacts(
         # 转换为响应格式
         artifact_responses = [
             ArtifactResponse(
-                id=a.id,
-                turn=a.turn,
+                id=a.artifact_id,
+                turn=a.turn_number,
                 timestamp=a.timestamp.isoformat() if isinstance(a.timestamp, datetime) else a.timestamp,
                 artifact_type=a.artifact_type,
-                topic=a.topic,
+                topic=a.topic or "",
                 summary=a.summary,
                 content=a.content
             )
@@ -125,11 +122,11 @@ async def get_artifact_detail(artifact_id: str):
             raise HTTPException(status_code=404, detail="Artifact not found")
         
         return ArtifactResponse(
-            id=artifact.id,
-            turn=artifact.turn,
+            id=artifact.artifact_id,
+            turn=artifact.turn_number,
             timestamp=artifact.timestamp.isoformat() if isinstance(artifact.timestamp, datetime) else artifact.timestamp,
             artifact_type=artifact.artifact_type,
-            topic=artifact.topic,
+            topic=artifact.topic or "",
             summary=artifact.summary,
             content=artifact.content
         )

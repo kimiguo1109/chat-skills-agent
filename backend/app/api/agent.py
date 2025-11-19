@@ -10,8 +10,9 @@ from typing import Dict, Any
 from fastapi import APIRouter, HTTPException, Depends, status
 from pydantic import BaseModel, Field, field_validator
 
-from app.core import MemoryManager, SkillOrchestrator
+from app.core import SkillOrchestrator, MemoryManager
 from app.services.gemini import GeminiClient
+from app.dependencies import get_memory_manager, get_gemini_client
 
 logger = logging.getLogger(__name__)
 
@@ -106,18 +107,6 @@ class AgentChatResponse(BaseModel):
 
 # ============= Dependency Functions =============
 
-def get_memory_manager() -> MemoryManager:
-    """获取 Memory Manager 单例"""
-    if not hasattr(get_memory_manager, "_instance"):
-        get_memory_manager._instance = MemoryManager(use_s3=False)
-    return get_memory_manager._instance
-
-
-def get_gemini_client() -> GeminiClient:
-    """获取 Gemini Client 单例"""
-    if not hasattr(get_gemini_client, "_instance"):
-        get_gemini_client._instance = GeminiClient()
-    return get_gemini_client._instance
 
 
 def get_skill_orchestrator(
