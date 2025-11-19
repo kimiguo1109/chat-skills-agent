@@ -63,12 +63,12 @@ output_schema:
     - "questions"
 
 models:
-  primary: "moonshotai/moonshot-v1-8k"  # ⚡⚡ 伪思考模式：使用普通模型
-  fallback: "moonshotai/moonshot-v1-8k"
+  primary: "moonshotai/kimi-k2-thinking"  # 🆕 使用 Kimi thinking 模型
+  fallback: "moonshotai/kimi-k2-thinking"
 
-thinking_budget: 0  # ⚡⚡ 伪思考模式：关闭真thinking，使用prompt引导
+thinking_budget: 0  # ⚡⚡⚡ 关闭真实thinking模式，使用伪思考（prompt引导）
 temperature: 0.8  # ⚡⚡ 激进优化：提高至0.8，最大化生成速度
-pseudo_thinking: true  # 🆕 启用伪思考模式
+use_pseudo_thinking: true  # 🆕 启用伪思考模式（通过prompt引导）
 
 context:
   need_user_memory: true
