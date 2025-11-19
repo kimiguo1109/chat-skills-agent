@@ -844,6 +844,378 @@ intent_keywords = {
 
 ---
 
+## 8. Phase 4 架构展望：Skill Registry 驱动
+
+### 8.1 设计目标
+
+**核心理念**: Intent 不再用 Prompt 识别 → 改为 Skill Registry 匹配（0 token）
+
+**优化目标**:
+- ✅ Intent Router Token 消耗: **4,500 → 0** (100% 节省)
+- ✅ 响应时间: **<0.001s** (纯代码匹配)
+- ✅ 架构简化: 移除 LLM 依赖（Intent Router）
+- ✅ 可扩展性: 添加新 Skill 只需新增 skill.md
+
+---
+
+### 8.2 架构对比
+
+#### Phase 3 (当前)
+
+```
+User Message
+    ↓
+┌─────────────────────────────────────┐
+│ Intent Router                       │
+│ 1. Rule Engine (70%, 0 tokens) ✅   │
+│ 2. LLM Fallback (30%, ~1,500) ⚠️   │
+└─────────────────────────────────────┘
+    ↓
+Skill Orchestrator → Skill Execution
+
+Token: 4,500 tokens / 10轮对话
+```
+
+**问题**:
+- ❌ 30% 请求仍需 LLM
+- ❌ Skill 定义分散（YAML + Prompt）
+- ❌ Intent Router Prompt 包含 Skill 信息（冗余）
+
+#### Phase 4 (未来)
+
+```
+User Message
+    ↓
+┌─────────────────────────────────────┐
+│ Skill Registry Matcher              │
+│ (100%, 0 tokens) ✅                  │
+│                                     │
+│ 1. Load skill.md                   │
+│ 2. Keyword matching                │
+│ 3. Parameter extraction            │
+└─────────────────────────────────────┘
+    ↓
+Skill Instance → Skill Execution
+
+Token: 0 tokens / 10轮对话 🎉
+```
+
+**优势**:
+- ✅ 100% 意图识别 0 token
+- ✅ Skill 定义统一（skill.md）
+- ✅ Prompt 只用于技能执行
+- ✅ 易于扩展
+
+---
+
+### 8.3 核心组件
+
+#### Skill Metadata (skill.md)
+
+**文件结构**:
+```
+backend/skills/
+├── quiz_skill/
+│   ├── skill.md     ← 技能定义（结构化）
+│   └── prompt.txt   ← 执行提示（仅用于 LLM）
+├── explain_skill/
+│   ├── skill.md
+│   └── prompt.txt
+└── ...
+```
+
+**skill.md 格式**:
+```markdown
+# Quiz Skill - 练习题生成
+
+## Metadata
+- **ID**: quiz_skill
+- **Display Name**: 练习题生成
+- **Version**: 1.0.0
+
+## Intent Triggers
+### Primary Keywords
+- 题, 题目, 练习, quiz, test
+
+### Quantity Patterns
+- \d+道题 → quantity
+- \d+个问题 → quantity
+
+### Topic Patterns
+- {quantity}道{topic}的题 → topic
+- 关于{topic}的练习 → topic
+
+## Input Schema
+{
+  "topic": "string (required)",
+  "quantity": "integer (default: 5)",
+  "difficulty": "enum[easy, medium, hard]",
+  "source_content": "object (optional)"
+}
+
+## Output Schema
+{
+  "quiz_set_id": "string",
+  "questions": [...]
+}
+
+## Examples
+- "给我5道二战历史的题" → quiz_skill(topic="二战历史", quantity=5)
+- "出题目" → quiz_skill(topic=None) → Clarification
+```
+
+#### Skill Registry
+
+**功能**:
+```python
+class SkillRegistry:
+    def match_message(self, message: str) -> SkillMatch:
+        """
+        匹配用户消息到技能 (0 tokens)
+        
+        流程:
+        1. 加载所有 skill.md
+        2. 关键词匹配
+        3. 参数提取（正则）
+        4. 计算置信度
+        
+        返回:
+        - skill_id: 匹配的技能
+        - confidence: 匹配置信度
+        - parameters: 提取的参数
+        """
+```
+
+#### Intent Router (简化版)
+
+**新逻辑**:
+```python
+class IntentRouter:
+    def parse(self, message: str) -> IntentResult:
+        # 1. Skill Registry 匹配 (0 tokens)
+        match = self.skill_registry.match_message(message)
+        
+        if match and match.confidence >= 0.8:
+            return IntentResult(
+                intent=match.skill_id,
+                topic=match.parameters.get("topic"),
+                parameters=match.parameters
+            )
+        
+        # 2. Fallback: other intent (仍然 0 tokens)
+        return IntentResult(intent="other", topic=None)
+```
+
+**移除**:
+- ❌ gemini_client
+- ❌ rule_based_classifier
+- ❌ LLM fallback 逻辑
+- ❌ Prompt template
+
+---
+
+### 8.4 性能预期
+
+#### Token 消耗（10轮对话）
+
+| 架构 | Intent Router | Skill Execution | 总计 | 优化 |
+|------|--------------|----------------|------|------|
+| Phase 1 (纯LLM) | 31,320 | ~60,000 | 91,320 | - |
+| Phase 3 (规则引擎) | 4,500 | ~60,000 | 64,500 | -29% |
+| **Phase 4 (Skill Registry)** | **0** | **~60,000** | **~60,000** | **-34%** ✅ |
+
+**Intent Router Token 节省**:
+- Phase 3 → Phase 4: 4,500 → 0 (**-100%**)
+
+#### 响应时间
+
+| 架构 | Intent Router | 优化 |
+|------|--------------|------|
+| Phase 1 (纯LLM) | ~2.0s | - |
+| Phase 3 (规则引擎) | <0.01s (70%) / ~1.6s (30%) | -92% |
+| **Phase 4 (Skill Registry)** | **<0.001s (100%)** | **-99.95%** ✅ |
+
+#### 架构复杂度
+
+| 指标 | Phase 3 | Phase 4 | 优化 |
+|------|---------|---------|------|
+| Intent Router LOC | ~500 行 | **~200 行** | -60% ✅ |
+| 依赖 LLM | 是 (30%) | **否** | ✅ |
+| Skill 定义 | YAML + Prompt | **skill.md** | ✅ |
+| 可扩展性 | 中等 | **高** | ✅ |
+| 维护成本 | 中等 | **低** | ✅ |
+
+---
+
+### 8.5 实施计划
+
+#### Phase 1: 创建 skill.md (2-3小时)
+
+**任务**:
+- 为 6 个技能创建 skill.md
+- 定义 Intent Triggers、Input/Output Schema
+- 迁移现有 YAML 配置
+
+**文件**:
+```
+backend/skills/
+├── quiz_skill/skill.md
+├── explain_skill/skill.md
+├── flashcard_skill/skill.md
+├── notes_skill/skill.md
+├── mindmap_skill/skill.md
+└── learning_bundle_skill/skill.md
+```
+
+#### Phase 2: 增强 Skill Registry (1-2小时)
+
+**功能**:
+- `_load_all_skills()`: 加载所有 skill.md
+- `_parse_skill_md()`: 解析 Markdown 格式
+- `match_message()`: 匹配用户消息（0 tokens）
+- `_calculate_confidence()`: 计算匹配置信度
+
+#### Phase 3: 简化 Intent Router (30分钟)
+
+**移除**:
+- LLM fallback 逻辑
+- Prompt template 加载
+- Gemini client 依赖
+
+**保留**:
+- `parse()` 方法（简化为调用 Skill Registry）
+- IntentResult 构建
+
+#### Phase 4: 测试和验证 (1小时)
+
+**测试用例**:
+```python
+# 明确请求
+assert match("给我5道二战历史的题").skill_id == "quiz_skill"
+assert match("给我5道二战历史的题").parameters == {
+    "topic": "二战历史",
+    "quantity": 5
+}
+
+# 无主题（触发 Clarification）
+assert match("出题目").parameters["topic"] is None
+
+# 上下文引用
+assert match("解释一下第一道题").parameters == {
+    "use_last_artifact": True,
+    "reference_index": 0
+}
+
+# 未匹配
+assert match("你好") is None  # Fallback to "other"
+```
+
+**总时间**: 4-6 小时
+
+---
+
+### 8.6 兼容性策略
+
+**渐进式迁移**:
+```python
+class IntentRouter:
+    def parse(self, message: str) -> IntentResult:
+        # 1. 优先：Skill Registry (0 tokens)
+        match = self.skill_registry.match_message(message)
+        if match and match.confidence >= 0.8:
+            return self._build_result(match)
+        
+        # 2. Fallback：规则引擎 (Phase 3, 0 tokens)
+        rule_result = self.rule_classifier.classify(message)
+        if rule_result:
+            return rule_result
+        
+        # 3. 最终：LLM (可选，逐步移除)
+        # return self._llm_fallback(message)  # ← 未来移除
+        
+        # 4. 默认：other intent
+        return IntentResult(intent="other", topic=None)
+```
+
+**优势**:
+- ✅ 不破坏现有功能
+- ✅ 逐步提高 Skill Registry 匹配率
+- ✅ 最终完全移除 LLM 依赖
+
+---
+
+### 8.7 预期收益
+
+#### Token 成本
+
+**10轮对话**:
+- Phase 3: 64,500 tokens (Intent: 4,500 + Skill: 60,000)
+- Phase 4: **60,000 tokens** (Intent: 0 + Skill: 60,000)
+- **节省**: 4,500 tokens / 10轮 = **450 tokens/轮**
+
+**100轮对话**:
+- Phase 3: 645,000 tokens
+- Phase 4: **600,000 tokens**
+- **节省**: 45,000 tokens (**$0.07 @ Gemini Flash 价格**)
+
+#### 响应速度
+
+- Intent Router: **<0.001s** (vs Phase 3 平均 ~0.5s)
+- 总响应时间: **-10%** (减少 0.5s 延迟)
+
+#### 架构质量
+
+- **代码量**: -60% (Intent Router)
+- **维护成本**: -70% (无需维护 LLM prompt)
+- **扩展性**: +100% (添加新 Skill 只需新增 skill.md)
+- **可测试性**: +100% (纯代码逻辑，易测试)
+
+---
+
+### 8.8 技术挑战
+
+#### 挑战 1: 复杂语义理解
+
+**问题**: "根据刚才北极冰川融化的那个例子出3道题"
+**现状**: LLM 理解复杂引用
+**方案**: 
+- Skill Registry 识别 "出题" → quiz_skill
+- 参数提取: "北极冰川融化" (关键词匹配)
+- 上下文管理: Orchestrator 负责（已有）
+
+#### 挑战 2: 模糊意图
+
+**问题**: "帮我学习一下"
+**现状**: LLM 推断用户偏好
+**方案**:
+- Fallback 到 Clarification（已有）
+- 展示所有可用 Skills
+- 用户选择后再执行
+
+#### 挑战 3: 新增 Skill
+
+**问题**: 如何快速扩展新技能？
+**方案**:
+- 创建 skill.md（5-10分钟）
+- Skill Registry 自动加载
+- 无需修改 Intent Router 代码 ✅
+
+---
+
+### 8.9 实施优先级
+
+| 优先级 | 阶段 | 时间 | 收益 | 风险 |
+|-------|------|------|------|------|
+| 🔴 高 | Phase 1: 创建 skill.md | 2-3h | 明确 Skill 定义 | 低 |
+| 🔴 高 | Phase 2: 增强 Skill Registry | 1-2h | 0 token 匹配 | 低 |
+| 🟡 中 | Phase 3: 简化 Intent Router | 30min | 移除 LLM | 中 |
+| 🟢 低 | Phase 4: 测试验证 | 1h | 确保正确性 | 低 |
+
+**总时间**: 4-6 小时
+**预期完成**: V2.1 版本
+
+---
+
 ## 📊 统计数据
 
 ### 功能完成度
