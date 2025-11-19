@@ -37,6 +37,108 @@ class GeminiClient:
         
         logger.info("✅ Gemini client initialized with new SDK")
     
+    async def generate_stream(
+        self,
+        prompt: str,
+        model: str = "gemini-2.5-flash",
+        max_tokens: int = 2000,
+        temperature: float = 0.7,
+        thinking_budget: Optional[int] = 1024,
+        return_thinking: bool = True
+    ):
+        """
+        流式生成内容（用于实时展示思考过程）
+        
+        Args:
+            prompt: 提示词
+            model: 模型名称
+            max_tokens: 最大token数
+            temperature: 温度参数
+            thinking_budget: 思考预算
+            return_thinking: 是否返回思考过程
+            
+        Yields:
+            Dict: 包含 type (thinking/content) 和 text 的字典
+        """
+        config_kwargs = {
+            "temperature": temperature,
+            "max_output_tokens": max_tokens,
+            "response_modalities": ["TEXT"],
+        }
+        
+        # 添加思考配置
+        if thinking_budget is not None and thinking_budget > 0:
+            config_kwargs["thinkingConfig"] = types.ThinkingConfig(
+                thinkingBudget=thinking_budget,
+                includeThoughts=return_thinking
+            )
+        
+        config = types.GenerateContentConfig(**config_kwargs)
+        
+        try:
+            logger.info(f"🌊 Starting streaming generation: model={model}")
+            
+            # 使用流式 API
+            stream = await self.async_client.models.generate_content_stream(
+                model=model,
+                contents=prompt,
+                config=config
+            )
+            
+            thinking_accumulated = []
+            content_accumulated = []
+            
+            async for chunk in stream:
+                if hasattr(chunk, 'candidates') and chunk.candidates:
+                    candidate = chunk.candidates[0]
+                    
+                    if hasattr(candidate, 'content') and hasattr(candidate.content, 'parts'):
+                        for part in candidate.content.parts:
+                            # 检查是否为思考部分
+                            if hasattr(part, 'thought'):
+                                thought = part.thought
+                                if isinstance(thought, str) and thought:
+                                    thinking_accumulated.append(thought)
+                                    yield {
+                                        "type": "thinking",
+                                        "text": thought,
+                                        "accumulated": "".join(thinking_accumulated)
+                                    }
+                                elif thought is True and hasattr(part, 'text'):
+                                    text = part.text
+                                    if text:
+                                        thinking_accumulated.append(text)
+                                        yield {
+                                            "type": "thinking",
+                                            "text": text,
+                                            "accumulated": "".join(thinking_accumulated)
+                                        }
+                            # 内容部分
+                            elif hasattr(part, 'text') and part.text:
+                                text = part.text
+                                content_accumulated.append(text)
+                                yield {
+                                    "type": "content",
+                                    "text": text,
+                                    "accumulated": "".join(content_accumulated)
+                                }
+            
+            # 完成标记
+            yield {
+                "type": "done",
+                "thinking": "".join(thinking_accumulated),
+                "content": "".join(content_accumulated)
+            }
+            
+            logger.info(f"✅ Streaming generation complete")
+            
+        except Exception as e:
+            logger.error(f"❌ Streaming generation error: {e}")
+            yield {
+                "type": "error",
+                "error": str(e)
+            }
+    
     async def generate(
         self,
         prompt: str,

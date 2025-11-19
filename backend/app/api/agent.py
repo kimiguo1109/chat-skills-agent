@@ -5,9 +5,12 @@ Agent API - 统一的聊天端点
 """
 import logging
 import time
+import json
+import asyncio
 from datetime import datetime
 from typing import Dict, Any
 from fastapi import APIRouter, HTTPException, Depends, status
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field, field_validator
 
 from app.core import SkillOrchestrator, MemoryManager
@@ -725,6 +728,87 @@ async def agent_health() -> Dict[str, Any]:
                 "message": str(e)
             }
         )
+
+
+@router.post("/chat-stream", status_code=status.HTTP_200_OK)
+async def agent_chat_stream(
+    request: ChatRequest,
+    orchestrator: SkillOrchestrator = Depends(get_skill_orchestrator),
+    memory_manager: MemoryManager = Depends(get_memory_manager),
+    gemini_client: GeminiClient = Depends(get_gemini_client)
+):
+    """
+    🆕 流式聊天端点 (Server-Sent Events)
+    
+    实时展示思考过程和生成内容，提升用户体验
+    
+    Args:
+        request: 聊天请求
+    
+    Returns:
+        StreamingResponse: Server-Sent Events 流
+    """
+    async def event_generator():
+        try:
+            # Step 1: 意图识别
+            yield f"data: {json.dumps({'type': 'status', 'message': '正在分析您的请求...'}, ensure_ascii=False)}\n\n"
+            await asyncio.sleep(0.1)
+            
+            # 获取 memory context
+            memory_summary = memory_manager.get_memory_summary(
+                user_id=request.user_id,
+                session_id=request.session_id
+            )
+            
+            # 获取 last artifact summary
+            session_context = memory_manager.get_session_context(request.session_id)
+            last_artifact_summary = None
+            if session_context and hasattr(session_context, 'last_artifact'):
+                last_artifact_summary = f"User just interacted with: {session_context.last_artifact}"
+            
+            # Intent routing
+            from app.core.intent_router import IntentRouter
+            intent_router = IntentRouter(gemini_client=gemini_client)
+            
+            intent_results = await intent_router.parse(
+                message=request.message,
+                memory_summary=memory_summary,
+                last_artifact_summary=last_artifact_summary
+            )
+            
+            if not intent_results:
+                yield f"data: {json.dumps({'type': 'error', 'message': '无法理解您的请求'}, ensure_ascii=False)}\n\n"
+                return
+            
+            # Step 2: 执行技能（流式）
+            intent_result = intent_results[0]
+            yield f"data: {json.dumps({'type': 'status', 'message': f'开始{intent_result.intent}...'}, ensure_ascii=False)}\n\n"
+            
+            # 🆕 使用流式 execute
+            async for chunk in orchestrator.execute_stream(
+                intent_result=intent_result,
+                user_id=request.user_id,
+                session_id=request.session_id
+            ):
+                yield f"data: {json.dumps(chunk, ensure_ascii=False)}\n\n"
+                await asyncio.sleep(0.01)  # 小延迟，避免前端处理过快
+            
+            # 完成
+            yield f"data: {json.dumps({'type': 'done'}, ensure_ascii=False)}\n\n"
+            
+        except Exception as e:
+            logger.error(f"❌ Streaming error: {e}")
+            yield f"data: {json.dumps({'type': 'error', 'message': str(e)}, ensure_ascii=False)}\n\n"
+    
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no"  # 禁用 nginx 缓冲
+        }
+    )
 
 
 @router.get("/info", status_code=status.HTTP_200_OK)
