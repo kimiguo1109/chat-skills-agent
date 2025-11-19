@@ -675,11 +675,42 @@ function handleStreamChunk(responseId, data) {
     const statusEl = document.getElementById(`${responseId}-status`);
     const thinkingSection = document.getElementById(`${responseId}-thinking-section`);
     const thinkingEl = document.getElementById(`${responseId}-thinking-content`);
+    const contentSection = document.getElementById(`${responseId}-content-section`);
+    const contentTextEl = document.getElementById(`${responseId}-content-text`);
     const finalEl = document.getElementById(`${responseId}-final`);
     
     if (data.type === 'status') {
         if (statusEl) {
             statusEl.querySelector('span').textContent = data.message;
+        }
+    }
+    // 🆕 Plan Skill进度事件
+    else if (data.type === 'plan_start') {
+        if (statusEl) {
+            statusEl.querySelector('span').textContent = `🎓 生成学习包：${data.topic} (${data.total_steps}个步骤)`;
+        }
+    }
+    else if (data.type === 'step_start') {
+        // 更新状态显示当前步骤
+        if (statusEl) {
+            statusEl.querySelector('span').textContent = `📍 Step ${data.step_order}/${data.total_steps}: ${data.step_name}`;
+        }
+        
+        // 如果有之前的thinking/content区域，折叠它们
+        if (thinkingSection && !thinkingSection.classList.contains('hidden')) {
+            // 可选：折叠之前的步骤，或者保留展开
+        }
+    }
+    else if (data.type === 'step_done') {
+        // 步骤完成，可以添加完成标记
+        if (statusEl) {
+            statusEl.querySelector('span').textContent = `✅ Step ${data.step_order}/${data.total_steps} 完成`;
+        }
+    }
+    else if (data.type === 'step_error') {
+        // 步骤失败
+        if (statusEl) {
+            statusEl.querySelector('span').textContent = `⚠️ Step ${data.step_order} 失败: ${data.error}`;
         }
     } 
     else if (data.type === 'thinking') {
