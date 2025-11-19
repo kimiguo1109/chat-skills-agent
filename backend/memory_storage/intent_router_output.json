@@ -1,36 +1,20 @@
 {
   "description": "Intent Router 实时输出记录 (Phase 3 架构)",
   "latest": {
-    "timestamp": "2025-11-19T14:57:34.012129",
-    "user_message": "帮我理解二战的起因",
+    "timestamp": "2025-11-19T15:10:25.817074",
+    "user_message": "什么是光合作用",
     "method": "rule_engine",
     "tokens_used": 0,
     "results": [
       {
         "intent": "explain_request",
-        "topic": "理解二战 起因",
+        "topic": "光合作用",
         "confidence": 0.95,
         "parameters": {}
       }
     ]
   },
   "history": [
-    {
-      "timestamp": "2025-11-19T14:32:28.489346",
-      "user_message": "给我5道光合作用的题",
-      "method": "rule_engine",
-      "tokens_used": 0,
-      "results": [
-        {
-          "intent": "quiz_request",
-          "topic": "光合作用",
-          "confidence": 0.95,
-          "parameters": {
-            "quantity": 5
-          }
-        }
-      ]
-    },
     {
       "timestamp": "2025-11-19T14:32:46.179512",
       "user_message": "什么是光合作用",
@@ -160,11 +144,25 @@
           "parameters": {}
         }
       ]
+    },
+    {
+      "timestamp": "2025-11-19T15:10:25.817074",
+      "user_message": "什么是光合作用",
+      "method": "rule_engine",
+      "tokens_used": 0,
+      "results": [
+        {
+          "intent": "explain_request",
+          "topic": "光合作用",
+          "confidence": 0.95,
+          "parameters": {}
+        }
+      ]
     }
   ],
   "stats": {
-    "total_requests": 18,
-    "rule_based_success": 18,
+    "total_requests": 19,
+    "rule_based_success": 19,
     "llm_fallback": 0,
     "rule_success_rate": "100.0%"
   }

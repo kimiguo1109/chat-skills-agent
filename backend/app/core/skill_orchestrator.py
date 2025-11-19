@@ -154,6 +154,24 @@ class SkillOrchestrator:
                 except:
                     pass
             
+            # 检查内容是否为空（可能因API错误中断）
+            if not json_str or len(json_str.strip()) < 10:
+                logger.error(f"❌ Content is empty or too short, likely due to API interruption")
+                yield {
+                    "type": "error",
+                    "message": "AI服务暂时过载，请稍后重试 (503 Service Unavailable)"
+                }
+                return
+            
+            # 检查内容是否看起来像markdown（而不是JSON）
+            if json_str.strip().startswith('**') or json_str.strip().startswith('#'):
+                logger.error(f"❌ Content appears to be markdown, not JSON - API stream was interrupted")
+                yield {
+                    "type": "error",
+                    "message": "AI服务中断了生成过程，请刷新页面后重试"
+                }
+                return
+            
             # 尝试解析 JSON
             try:
                 parsed_content = json.loads(json_str)
@@ -187,13 +205,13 @@ class SkillOrchestrator:
                         # 所有尝试都失败
                         yield {
                             "type": "error",
-                            "message": "生成内容格式错误（JSON截断）"
+                            "message": "生成内容格式错误（JSON截断），请重试"
                         }
                         return
                 else:
                     yield {
                         "type": "error",
-                        "message": "生成内容格式错误"
+                        "message": "生成内容格式错误，请重试"
                     }
                     return
             
@@ -228,11 +246,22 @@ class SkillOrchestrator:
             logger.info(f"✅ Stream orchestration complete for {skill.id}")
             
         except Exception as e:
+            error_msg = str(e)
             logger.error(f"❌ Stream orchestration error: {e}")
-            yield {
-                "type": "error",
-                "message": str(e)
-            }
+            
+            # 检测503错误（API过载）
+            if "503" in error_msg or "overloaded" in error_msg.lower() or "unavailable" in error_msg.lower():
+                yield {
+                    "type": "error",
+                    "message": "🔄 AI服务暂时过载，请等待10-30秒后重试",
+                    "code": 503
+                }
+            else:
+                yield {
+                    "type": "error",
+                    "message": f"发生错误: {error_msg}",
+                    "code": 500
+                }
     
     async def execute(
         self,

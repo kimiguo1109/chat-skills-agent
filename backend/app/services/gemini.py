@@ -145,16 +145,27 @@ class GeminiClient:
             logger.info(f"✅ Streaming generation complete")
             
         except Exception as e:
+            error_msg = str(e)
             logger.error(f"❌ Streaming generation error: {e}")
-            yield {
-                "type": "error",
-                "error": str(e)
-            }
+            
+            # 检测503错误（API过载）
+            if "503" in error_msg or "overloaded" in error_msg.lower():
+                yield {
+                    "type": "error",
+                    "error": "AI服务暂时过载，请等待几秒后重试 (503 Service Overloaded)",
+                    "code": 503
+                }
+            else:
+                yield {
+                    "type": "error",
+                    "error": error_msg,
+                    "code": 500
+                }
     
     async def generate(
         self,
         prompt: str,
-        model: str = "gemini-2.5-flash",  # 🆕 使用 2.5 Flash 支持思考模型
+        model: str = "gemini-2.5-flash-lite",  # 🆕 使用 2.5 Flash 支持思考模型
         response_format: str = "text",
         max_tokens: int = 2000,
         temperature: float = 0.7,
