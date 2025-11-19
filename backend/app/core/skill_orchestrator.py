@@ -114,7 +114,7 @@ class SkillOrchestrator:
                 plan_executor = PlanSkillExecutor(skill_orchestrator=self)
                 
                 async for chunk in plan_executor.execute_plan_stream(
-                    plan_config=skill.config,
+                    plan_config=skill.raw_config,
                     user_input=input_params,
                     user_profile=user_profile,
                     session_context=session_context

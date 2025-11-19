@@ -1,11 +1,39 @@
 {
   "description": "Intent Router 实时输出记录 (Phase 3 架构)",
-  "latest": {},
-  "history": [],
+  "latest": {
+    "timestamp": "2025-11-19T17:38:37.714764",
+    "user_message": "牛顿第二定律的学习包",
+    "method": "rule_engine",
+    "tokens_used": 0,
+    "results": [
+      {
+        "intent": "learning_bundle",
+        "topic": "牛顿第二定律",
+        "confidence": 0.95,
+        "parameters": {}
+      }
+    ]
+  },
+  "history": [
+    {
+      "timestamp": "2025-11-19T17:38:37.714764",
+      "user_message": "牛顿第二定律的学习包",
+      "method": "rule_engine",
+      "tokens_used": 0,
+      "results": [
+        {
+          "intent": "learning_bundle",
+          "topic": "牛顿第二定律",
+          "confidence": 0.95,
+          "parameters": {}
+        }
+      ]
+    }
+  ],
   "stats": {
-    "total_requests": 0,
-    "rule_based_success": 0,
+    "total_requests": 1,
+    "rule_based_success": 1,
     "llm_fallback": 0,
-    "rule_success_rate": "0.0%"
+    "rule_success_rate": "100.0%"
   }
 }
