@@ -570,6 +570,12 @@ async def agent_chat(
                 result = all_results[0]
                 response_content = result.get("response_content") or result.get("content", {})
                 
+                # 🔍 调试：检查thinking是否存在
+                if "_thinking" in response_content:
+                    logger.info(f"🧠 Response contains thinking: {len(response_content['_thinking'])} chars")
+                else:
+                    logger.warning(f"⚠️  Response missing _thinking field. Keys: {list(response_content.keys())}")
+                
                 response = AgentChatResponse(
                     user_id=request.user_id,
                     session_id=request.session_id,
