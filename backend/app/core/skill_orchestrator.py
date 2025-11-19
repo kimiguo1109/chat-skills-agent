@@ -137,11 +137,30 @@ class SkillOrchestrator:
             full_thinking = "".join(thinking_accumulated)
             full_content = "".join(content_accumulated)
             
+            # 🔧 提取JSON（去除markdown代码块）
+            json_str = full_content
+            if "```json" in json_str:
+                # JSON被包裹在```json ...```中
+                try:
+                    json_str = json_str.split("```json")[1].split("```")[0].strip()
+                    logger.info(f"✂️  Extracted JSON from markdown code block")
+                except:
+                    logger.warning(f"⚠️  Failed to extract JSON from markdown")
+            elif "```" in json_str:
+                # JSON被包裹在``` ...```中
+                try:
+                    json_str = json_str.split("```")[1].split("```")[0].strip()
+                    logger.info(f"✂️  Extracted JSON from code block")
+                except:
+                    pass
+            
             # 尝试解析 JSON
             try:
-                parsed_content = json.loads(full_content)
+                parsed_content = json.loads(json_str)
+                logger.info(f"✅ JSON parsed successfully")
             except json.JSONDecodeError as e:
                 logger.error(f"❌ Failed to parse JSON: {e}")
+                logger.error(f"Content preview: {json_str[:200]}")
                 yield {
                     "type": "error",
                     "message": "生成内容格式错误"
