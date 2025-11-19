@@ -197,12 +197,23 @@ class PlanSkillExecutor:
         logger.info(f"🎓 主题: {user_input.get('topic', 'Unknown')}")
         logger.info(f"{'='*60}\n")
         
-        # 发送Plan开始状态
+        # 🆕 准备步骤预览信息
+        steps_preview = []
+        for idx, step in enumerate(steps, 1):
+            steps_preview.append({
+                "step_order": idx,
+                "step_name": step.get("name", f"步骤 {idx}"),
+                "step_description": step.get("description", ""),
+                "skill_id": step["skill_id"]
+            })
+        
+        # 发送Plan开始状态（包含步骤预览）
         yield {
             "type": "plan_start",
             "total_steps": total_steps,
             "topic": user_input.get('topic'),
-            "subject": user_input.get('subject')
+            "subject": user_input.get('subject'),
+            "steps_preview": steps_preview  # 🆕 完整步骤列表
         }
         
         # 执行结果存储
