@@ -58,7 +58,27 @@ class SkillDefinition(BaseModel):
         description="Prompt 模板文件名（位于 app/prompts/ 目录）"
     )
     
+    # 🆕 新增字段
+    skill_type: Optional[str] = Field(
+        default=None,
+        description="Skill 类型，如 'plan' 表示 Plan Skill"
+    )
+    
+    thinking_budget: Optional[int] = Field(
+        default=1024,
+        description="思考预算（tokens），0-24576"
+    )
+    
+    # 🆕 原始 YAML 配置（保存所有字段）
+    raw_config: Optional[Dict[str, Any]] = Field(
+        default=None,
+        description="原始 YAML 配置（包含所有字段）",
+        exclude=True
+    )
+    
+    # 🆕 保存额外的配置字段（Pydantic v2）
     model_config = {
+        "extra": "allow",  # 允许额外字段
         "json_schema_extra": {
             "example": {
                 "id": "quiz",

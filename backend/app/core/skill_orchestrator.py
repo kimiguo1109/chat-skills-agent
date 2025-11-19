@@ -266,7 +266,7 @@ class SkillOrchestrator:
         logger.info(f"📦 Selected skill: {skill.id} ({skill.display_name})")
         
         # 🆕 Step 1.5: 检查是否为 Plan Skill
-        if skill.config.get("skill_type") == "plan":
+        if skill.skill_type == "plan":
             logger.info(f"🎯 Detected Plan Skill: {skill.id}")
             return await self._execute_plan_skill(
                 skill=skill,
@@ -722,7 +722,7 @@ class SkillOrchestrator:
         # 执行计划
         try:
             bundle = await executor.execute_plan(
-                plan_config=skill.config,
+                plan_config=skill.raw_config,  # 🆕 使用原始配置
                 user_input=user_input,
                 user_profile=user_profile,
                 session_context=session_context
@@ -833,7 +833,7 @@ class SkillOrchestrator:
         
         # 调用 Gemini
         model = skill.models.get("primary", "gemini-2.5-flash")  # 🆕 使用 2.5 Flash
-        thinking_budget = skill.config.get("thinking_budget", 1024)  # 🆕 从 skill 配置读取
+        thinking_budget = skill.thinking_budget or 1024  # 🆕 从 skill 配置读取
         
         logger.debug(f"🤖 Calling Gemini model: {model} (thinking_budget={thinking_budget})")
         

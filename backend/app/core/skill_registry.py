@@ -56,6 +56,9 @@ class SkillRegistry:
                 # 使用 Pydantic 模型验证
                 skill_def = SkillDefinition(**config)
                 
+                # 🆕 保存原始配置
+                skill_def.raw_config = config
+                
                 # 注册 skill
                 self._skills[skill_def.id] = skill_def
                 

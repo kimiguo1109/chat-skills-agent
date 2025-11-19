@@ -1,34 +1,20 @@
 {
   "description": "Intent Router 实时输出记录 (Phase 3 架构)",
   "latest": {
-    "timestamp": "2025-11-19T11:40:01.999629",
-    "user_message": "出题目",
+    "timestamp": "2025-11-19T12:39:37.774676",
+    "user_message": "什么是光合作用",
     "method": "rule_engine",
     "tokens_used": 0,
     "results": [
       {
-        "intent": "quiz_request",
-        "topic": null,
+        "intent": "explain_request",
+        "topic": "光合作用",
         "confidence": 0.95,
         "parameters": {}
       }
     ]
   },
   "history": [
-    {
-      "timestamp": "2025-11-18T19:00:12.793615",
-      "user_message": "生成牛顿定律的题目",
-      "method": "rule_engine",
-      "tokens_used": 0,
-      "results": [
-        {
-          "intent": "quiz_request",
-          "topic": "牛顿定律",
-          "confidence": 0.95,
-          "parameters": {}
-        }
-      ]
-    },
     {
       "timestamp": "2025-11-18T19:03:01.166111",
       "user_message": "学习自然语言",
@@ -159,11 +145,25 @@
           "parameters": {}
         }
       ]
+    },
+    {
+      "timestamp": "2025-11-19T12:39:37.774676",
+      "user_message": "什么是光合作用",
+      "method": "rule_engine",
+      "tokens_used": 0,
+      "results": [
+        {
+          "intent": "explain_request",
+          "topic": "光合作用",
+          "confidence": 0.95,
+          "parameters": {}
+        }
+      ]
     }
   ],
   "stats": {
-    "total_requests": 2,
-    "rule_based_success": 2,
+    "total_requests": 3,
+    "rule_based_success": 3,
     "llm_fallback": 0,
     "rule_success_rate": "100.0%"
   }
