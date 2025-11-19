@@ -698,6 +698,7 @@ function handleStreamChunk(responseId, data) {
         if (data.steps_preview && data.steps_preview.length > 0 && finalEl) {
             const previewHtml = renderPlanPreview(data.topic, data.steps_preview, data.total_steps);
             finalEl.innerHTML = previewHtml;
+            finalEl.classList.remove('hidden'); // 🔧 显示预览卡片！
             scrollToBottom();
         }
     }
@@ -1786,6 +1787,8 @@ function addErrorMessage(errorText) {
 // 🆕 智能滚动：只有用户在底部附近时才自动滚动
 let userScrolledAway = false;
 let scrollCheckTimeout = null;
+let lastScrollTop = 0;
+let isAutoScrolling = false;
 
 function scrollToBottom() {
     const chatArea = document.getElementById('chatMessages');
@@ -1793,10 +1796,12 @@ function scrollToBottom() {
     // 检测用户是否手动滚动到其他位置
     const isNearBottom = chatArea.scrollHeight - chatArea.scrollTop - chatArea.clientHeight < 100;
     
-    // 只有当用户在底部附近（或首次加载）时才自动滚动
-    if (isNearBottom || !userScrolledAway) {
+    // 只有当用户在底部附近时才自动滚动
+    if (isNearBottom && !userScrolledAway) {
+        isAutoScrolling = true;
         chatArea.scrollTop = chatArea.scrollHeight;
-        userScrolledAway = false;
+        // 短暂延迟后重置标志，避免误判
+        setTimeout(() => { isAutoScrolling = false; }, 50);
     }
 }
 
@@ -1805,19 +1810,36 @@ document.addEventListener('DOMContentLoaded', () => {
     const chatArea = document.getElementById('chatMessages');
     
     chatArea.addEventListener('scroll', () => {
+        // 如果是自动滚动触发的，忽略
+        if (isAutoScrolling) {
+            lastScrollTop = chatArea.scrollTop;
+            return;
+        }
+        
         clearTimeout(scrollCheckTimeout);
         
-        // 延迟检查，避免自动滚动时触发
+        // 延迟检查，避免频繁触发
         scrollCheckTimeout = setTimeout(() => {
-            const isNearBottom = chatArea.scrollHeight - chatArea.scrollTop - chatArea.clientHeight < 100;
+            const scrollTop = chatArea.scrollTop;
+            const scrollHeight = chatArea.scrollHeight;
+            const clientHeight = chatArea.clientHeight;
+            const isNearBottom = scrollHeight - scrollTop - clientHeight < 100;
             
-            // 如果用户不在底部，标记为已滚动离开
-            if (!isNearBottom) {
+            // 检测用户是否主动向上滚动
+            const userScrolledUp = scrollTop < lastScrollTop;
+            
+            if (userScrolledUp || !isNearBottom) {
+                // 用户主动向上滚动，或者不在底部
                 userScrolledAway = true;
-            } else {
+                console.log('🛑 用户手动滚动，停止自动滚动');
+            } else if (isNearBottom) {
+                // 用户滚回底部
                 userScrolledAway = false;
+                console.log('✅ 用户返回底部，恢复自动滚动');
             }
-        }, 150);
+            
+            lastScrollTop = scrollTop;
+        }, 100);
     });
 });
 
