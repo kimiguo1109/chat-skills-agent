@@ -961,12 +961,15 @@ class SkillOrchestrator:
         user_profile = await self.memory_manager.get_user_profile(user_id)
         session_context = await self.memory_manager.get_session_context(session_id)
         
+        # 生成 memory summary
+        memory_summary = await self.memory_manager.generate_memory_summary(user_id, session_id)
+        
         # 构建用户输入
         user_input = {
             "subject": intent_result.parameters.get("subject") if intent_result.parameters else None,
             "topic": intent_result.topic,
             "difficulty": intent_result.parameters.get("difficulty", "medium") if intent_result.parameters else "medium",
-            "memory_summary": self._format_memory_summary(user_profile, session_context)
+            "memory_summary": memory_summary.recent_behavior  # 🔧 使用 generate_memory_summary 结果
         }
         
         # 如果 subject 为空，尝试从 topic 中提取
