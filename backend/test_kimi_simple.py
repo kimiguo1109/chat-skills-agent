@@ -5,7 +5,7 @@ from openai import OpenAI
 
 # 直接使用用户提供的配置
 client = OpenAI(
-    api_key="sk-897e62d8f0fb482aa2c88ef2df2f38dc",
+    api_key="sk_RVzD0ExdrmLuQIcvC-UbUekNsbft0dVPiOq5Nh-1Xro",
     base_url="https://api.novita.ai/openai"
 )
 

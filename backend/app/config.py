@@ -13,7 +13,7 @@ class Settings(BaseSettings):
     GEMINI_MODEL: str = "gemini-2.5-flash"
     
     # Kimi (Moonshot AI) API 配置（通过 Novita AI）
-    KIMI_API_KEY: str = "sk-897e62d8f0fb482aa2c88ef2df2f38dc"  # Novita AI API Key
+    KIMI_API_KEY: str = "sk_RVzD0ExdrmLuQIcvC-UbUekNsbft0dVPiOq5Nh-1Xro"  # Novita AI API Key
     KIMI_BASE_URL: str = "https://api.novita.ai/openai"
     KIMI_MODEL: str = "moonshotai/kimi-k2-thinking"  # 支持 reasoning 模式
     
