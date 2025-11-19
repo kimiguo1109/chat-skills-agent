@@ -196,36 +196,47 @@ class KimiClient:
                 # 提取 reasoning_content（Kimi 的 thinking）
                 reasoning_chunk = getattr(delta, 'reasoning_content', None)
                 if reasoning_chunk and isinstance(reasoning_chunk, str):
-                    reasoning_buffer.append(reasoning_chunk)
                     reasoning_accumulated.append(reasoning_chunk)
                     
-                    # 🆕 缓冲区满了才发送
-                    buffered_text = "".join(reasoning_buffer)
-                    if len(buffered_text) >= buffer_size:
-                        logger.info(f"🧠 Reasoning buffer flush: {len(buffered_text)} chars")
-                        yield {
-                            "type": "thinking",
-                            "text": buffered_text,
-                            "accumulated": "".join(reasoning_accumulated)
-                        }
-                        reasoning_buffer = []
+                    # 🔥 二次分块：确保thinking也是流式的
+                    chunk_size = 5  # 每5个字符作为一个流式单位
+                    for i in range(0, len(reasoning_chunk), chunk_size):
+                        mini_chunk = reasoning_chunk[i:i+chunk_size]
+                        reasoning_buffer.append(mini_chunk)
+                        
+                        # 立即发送
+                        buffered_text = "".join(reasoning_buffer)
+                        if len(buffered_text) >= buffer_size:
+                            logger.info(f"🧠 Thinking stream: {len(buffered_text)} chars")
+                            yield {
+                                "type": "thinking",
+                                "text": buffered_text,
+                                "accumulated": "".join(reasoning_accumulated)
+                            }
+                            reasoning_buffer = []
                 
                 # 提取 content
                 content_chunk = delta.content
                 if content_chunk and isinstance(content_chunk, str):
-                    content_buffer.append(content_chunk)
                     content_accumulated.append(content_chunk)
                     
-                    # 🆕 缓冲区满了才发送
-                    buffered_text = "".join(content_buffer)
-                    if len(buffered_text) >= buffer_size:
-                        logger.info(f"📝 Content buffer flush: {len(buffered_text)} chars")
-                        yield {
-                            "type": "content",
-                            "text": buffered_text,
-                            "accumulated": "".join(content_accumulated)
-                        }
-                        content_buffer = []
+                    # 🔥 二次分块：如果API返回的chunk太大，拆分成小块流式发送
+                    # 这确保了即使API一次返回大块内容，用户也能看到流式效果
+                    chunk_size = 5  # 每5个字符作为一个流式单位
+                    for i in range(0, len(content_chunk), chunk_size):
+                        mini_chunk = content_chunk[i:i+chunk_size]
+                        content_buffer.append(mini_chunk)
+                        
+                        # 立即发送（buffer_size=1意味着不再累积）
+                        buffered_text = "".join(content_buffer)
+                        if len(buffered_text) >= buffer_size:
+                            logger.info(f"📝 Content stream: {len(buffered_text)} chars")
+                            yield {
+                                "type": "content",
+                                "text": buffered_text,
+                                "accumulated": "".join(content_accumulated)
+                            }
+                            content_buffer = []
             
             # 🆕 发送剩余缓冲区内容
             if reasoning_buffer:
