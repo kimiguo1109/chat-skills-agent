@@ -265,14 +265,41 @@ class PlanSkillExecutor:
                         )
                         step_contexts[step_id] = extracted_context
                         
-                        # 4. Token 统计
+                        # 4. 🆕 详细Token统计
                         tokens_used = self._estimate_tokens(result)
-                        self.token_usage["per_step"][step_id] = tokens_used
+                        
+                        # 尝试从result获取实际的usage信息
+                        actual_usage = result.get("_usage", {})
+                        
+                        # 构建详细的token统计
+                        step_token_info = {
+                            "estimated_tokens": tokens_used,
+                            "actual_usage": actual_usage,
+                            "step_name": step_name,
+                            "skill_id": skill_id
+                        }
+                        
+                        self.token_usage["per_step"][step_id] = step_token_info
                         self.token_usage["total"] += tokens_used
                         
-                        logger.info(f"✅ Step {step_id} 完成")
-                        logger.info(f"💰 Token 消耗: ~{tokens_used}")
-                        logger.info(f"📊 累计 Token: ~{self.token_usage['total']}")
+                        # 🆕 详细日志输出
+                        logger.info(f"")
+                        logger.info(f"{'─'*60}")
+                        logger.info(f"✅ Step {step_order}/{total_steps} 完成: {step_name}")
+                        logger.info(f"{'─'*60}")
+                        
+                        if actual_usage:
+                            logger.info(f"💰 Token消耗详情:")
+                            logger.info(f"   ├─ Prompt Tokens:     {actual_usage.get('prompt_tokens', 'N/A')}")
+                            logger.info(f"   ├─ Completion Tokens: {actual_usage.get('completion_tokens', 'N/A')}")
+                            logger.info(f"   ├─ Total Tokens:      {actual_usage.get('total_tokens', 'N/A')}")
+                            if "reasoning_tokens" in actual_usage and actual_usage.get("reasoning_tokens", 0) > 0:
+                                logger.info(f"   └─ Reasoning Tokens:  {actual_usage.get('reasoning_tokens', 0)}")
+                        else:
+                            logger.info(f"💰 Token消耗估算: ~{tokens_used} tokens")
+                        
+                        logger.info(f"📊 累计Token消耗: ~{self.token_usage['total']} tokens")
+                        logger.info(f"{'─'*60}")
                         
                         # 🆕 发送步骤完成状态
                         yield {
@@ -314,10 +341,59 @@ class PlanSkillExecutor:
                     }
                     return
         
-        logger.info(f"\n{'─'*60}")
-        logger.info(f"📦 所有步骤执行完成")
-        logger.info(f"✅ 成功: {len(step_results)}/{total_steps} 个步骤")
-        logger.info(f"💰 总 Token 消耗: ~{self.token_usage['total']}")
+        # 🆕 生成详细的Token统计报告
+        logger.info(f"\n{'━'*60}")
+        logger.info(f"📦 Plan Skill 执行完成统计")
+        logger.info(f"{'━'*60}")
+        logger.info(f"✅ 成功步骤: {len(step_results)}/{total_steps}")
+        logger.info(f"")
+        logger.info(f"💰 Token消耗详情:")
+        logger.info(f"{'─'*60}")
+        
+        total_prompt_tokens = 0
+        total_completion_tokens = 0
+        total_reasoning_tokens = 0
+        
+        for step_id, token_info in self.token_usage["per_step"].items():
+            step_name = token_info.get("step_name", step_id)
+            actual_usage = token_info.get("actual_usage", {})
+            
+            logger.info(f"")
+            logger.info(f"📍 {step_name} ({token_info.get('skill_id', 'unknown')})")
+            
+            if actual_usage:
+                prompt_t = actual_usage.get('prompt_tokens', 0)
+                completion_t = actual_usage.get('completion_tokens', 0)
+                reasoning_t = actual_usage.get('reasoning_tokens', 0)
+                total_t = actual_usage.get('total_tokens', 0)
+                
+                total_prompt_tokens += prompt_t
+                total_completion_tokens += completion_t
+                total_reasoning_tokens += reasoning_t
+                
+                logger.info(f"   ├─ Prompt:     {prompt_t:>6} tokens")
+                logger.info(f"   ├─ Completion: {completion_t:>6} tokens")
+                if reasoning_t > 0:
+                    logger.info(f"   ├─ Reasoning:  {reasoning_t:>6} tokens")
+                logger.info(f"   └─ Total:      {total_t:>6} tokens")
+            else:
+                estimated = token_info.get("estimated_tokens", 0)
+                logger.info(f"   └─ 估算:       ~{estimated:>6} tokens")
+        
+        logger.info(f"")
+        logger.info(f"{'─'*60}")
+        logger.info(f"📊 总计:")
+        
+        if total_prompt_tokens > 0 or total_completion_tokens > 0:
+            logger.info(f"   ├─ Prompt Tokens:     {total_prompt_tokens:>8}")
+            logger.info(f"   ├─ Completion Tokens: {total_completion_tokens:>8}")
+            if total_reasoning_tokens > 0:
+                logger.info(f"   ├─ Reasoning Tokens:  {total_reasoning_tokens:>8}")
+            logger.info(f"   └─ Total Tokens:      {total_prompt_tokens + total_completion_tokens:>8}")
+        else:
+            logger.info(f"   └─ 估算总计:          ~{self.token_usage['total']:>8} tokens")
+        
+        logger.info(f"{'─'*60}")
         
         # 检查最小成功步骤数
         min_required = plan_config.get("error_handling", {}).get("min_required_steps", 1)
