@@ -150,7 +150,7 @@ class KimiClient:
         max_tokens: int = 131072,  # ⚡⚡⚡ 参照在线版：131072
         thinking_budget: Optional[int] = None,
         return_thinking: bool = True,
-        buffer_size: int = 5  # ⚡⚡⚡ 极小缓冲（30→5），真·打字机效果
+        buffer_size: int = 1  # ⚡⚡⚡⚡ 极限优化：每个字符立即发送
     ) -> AsyncGenerator[Dict[str, Any], None]:
         """
         生成内容（流式 + 优化缓冲）

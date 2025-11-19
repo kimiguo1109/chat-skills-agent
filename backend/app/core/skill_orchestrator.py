@@ -157,7 +157,7 @@ class SkillOrchestrator:
                 prompt=prompt,
                 model=skill.models.get("primary", "gemini-2.5-flash-lite"),
                 thinking_budget=skill.thinking_budget or 256,  # ⚡ 快速思考模式
-                buffer_size=5,  # ⚡⚡⚡ 极小缓冲(30→5)，真·逐字显示
+                buffer_size=1,  # ⚡⚡⚡⚡ 极限优化：每个字符立即发送
                 temperature=getattr(skill, 'temperature', 1.0)  # ⚡⚡⚡ 最大化速度
             ):
                 # 累积数据
