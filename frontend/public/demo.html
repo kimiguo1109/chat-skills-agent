@@ -12,6 +12,10 @@
     <!-- Mind Elixir for Mind Map Rendering (IIFE version - works without module bundler) -->
     <link rel="stylesheet" href="/node_modules/mind-elixir/dist/MindElixir.css">
     <script src="/node_modules/mind-elixir/dist/MindElixir.iife.js"></script>
+    <!-- 🆕 KaTeX for Math Rendering -->
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.css" integrity="sha384-n8MVd4RsNIU0tAv4ct0nTaAbDJwPJzDEaqSD1odI+WdtXRGWt2kTvGFasHpSy3SV" crossorigin="anonymous">
+    <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.js" integrity="sha384-XjKyOOlGwcjNTAIQHIpgOno0Hl1YQqzUOEleOLALmuqehneUG+vnGctmUb0ZY0l8" crossorigin="anonymous"></script>
+    <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/contrib/auto-render.min.js" integrity="sha384-+VBxd3r6XgURycqtZ117nYw44OOcIax56Z4dCRWbxyPt0Koah1uHoK0o4+/RRE05" crossorigin="anonymous"></script>
 <script id="tailwind-config">
       tailwind.config = {
         darkMode: "class",
@@ -720,7 +724,32 @@ function handleStreamChunk(responseId, data) {
             thinkingSection.classList.remove('hidden');
         }
         if (thinkingEl) {
+            // 🆕 累积文本并渲染Markdown + LaTeX
             thinkingEl.textContent += data.text;
+            
+            // 简单的Markdown渲染：**粗体**
+            let renderedText = thinkingEl.textContent
+                .replace(/\*\*(.*?)\*\*/g, '<strong class="font-semibold text-text-light-primary dark:text-text-dark-primary">$1</strong>');
+            
+            thinkingEl.innerHTML = renderedText;
+            
+            // 🆕 LaTeX渲染（KaTeX）
+            if (typeof renderMathInElement !== 'undefined') {
+                try {
+                    renderMathInElement(thinkingEl, {
+                        delimiters: [
+                            {left: '$$', right: '$$', display: true},
+                            {left: '$', right: '$', display: false},
+                            {left: '\\[', right: '\\]', display: true},
+                            {left: '\\(', right: '\\)', display: false}
+                        ],
+                        throwOnError: false
+                    });
+                } catch (e) {
+                    console.warn('LaTeX rendering error:', e);
+                }
+            }
+            
             scrollToBottom();
         }
     } 
@@ -838,9 +867,13 @@ function removeLoadingMessage() {
 }
 
 // 渲染 QuizCard
-// 🆕 渲染思考过程
+// 🆕 渲染思考过程（支持Markdown和LaTeX）
 function renderThinkingProcess(thinking) {
     if (!thinking) return '';
+    
+    // 简单的Markdown渲染：**粗体**
+    let renderedText = escapeHtml(thinking)
+        .replace(/\*\*(.*?)\*\*/g, '<strong class="font-semibold">$1</strong>');
     
     return `
         <div class="w-full max-w-3xl mb-4">
@@ -856,7 +889,7 @@ function renderThinkingProcess(thinking) {
                 </summary>
                 <div class="px-4 py-3 border-t border-border-light dark:border-border-dark bg-gray-50 dark:bg-gray-900">
                     <div class="prose prose-sm dark:prose-invert max-w-none">
-                        <pre class="whitespace-pre-wrap text-sm text-text-light-secondary dark:text-text-dark-secondary font-mono leading-relaxed">${escapeHtml(thinking)}</pre>
+                        <pre class="whitespace-pre-wrap text-sm text-text-light-secondary dark:text-text-dark-secondary leading-relaxed thinking-content">${renderedText}</pre>
                     </div>
                 </div>
             </details>
@@ -1616,11 +1649,43 @@ function addErrorMessage(errorText) {
     scrollToBottom();
 }
 
-// 滚动到底部
+// 🆕 智能滚动：只有用户在底部附近时才自动滚动
+let userScrolledAway = false;
+let scrollCheckTimeout = null;
+
 function scrollToBottom() {
     const chatArea = document.getElementById('chatMessages');
-    chatArea.scrollTop = chatArea.scrollHeight;
+    
+    // 检测用户是否手动滚动到其他位置
+    const isNearBottom = chatArea.scrollHeight - chatArea.scrollTop - chatArea.clientHeight < 100;
+    
+    // 只有当用户在底部附近（或首次加载）时才自动滚动
+    if (isNearBottom || !userScrolledAway) {
+        chatArea.scrollTop = chatArea.scrollHeight;
+        userScrolledAway = false;
+    }
 }
+
+// 监听用户的滚动行为
+document.addEventListener('DOMContentLoaded', () => {
+    const chatArea = document.getElementById('chatMessages');
+    
+    chatArea.addEventListener('scroll', () => {
+        clearTimeout(scrollCheckTimeout);
+        
+        // 延迟检查，避免自动滚动时触发
+        scrollCheckTimeout = setTimeout(() => {
+            const isNearBottom = chatArea.scrollHeight - chatArea.scrollTop - chatArea.clientHeight < 100;
+            
+            // 如果用户不在底部，标记为已滚动离开
+            if (!isNearBottom) {
+                userScrolledAway = true;
+            } else {
+                userScrolledAway = false;
+            }
+        }, 150);
+    });
+});
 
 // 新建聊天
 function handleNewChat() {
@@ -2179,10 +2244,56 @@ function escapeHtml(text) {
   return div.innerHTML;
 }
 
+// ============= LaTeX渲染辅助函数 =============
+function renderMathInContent(element) {
+    if (typeof renderMathInElement !== 'undefined') {
+        try {
+            renderMathInElement(element, {
+                delimiters: [
+                    {left: '$$', right: '$$', display: true},
+                    {left: '$', right: '$', display: false},
+                    {left: '\\[', right: '\\]', display: true},
+                    {left: '\\(', right: '\\)', display: false}
+                ],
+                throwOnError: false
+            });
+        } catch (e) {
+            console.warn('LaTeX rendering error:', e);
+        }
+    }
+}
+
 // ============= 页面加载时初始化 =============
 document.addEventListener('DOMContentLoaded', () => {
   initHistory();
   console.log('🎉 Page loaded and history initialized');
+  
+  // 🆕 初始化KaTeX自动渲染
+  if (typeof renderMathInElement !== 'undefined') {
+      // 监听DOM变化，自动渲染LaTeX
+      const observer = new MutationObserver((mutations) => {
+          mutations.forEach((mutation) => {
+              mutation.addedNodes.forEach((node) => {
+                  if (node.nodeType === 1) { // Element node
+                      // 渲染thinking内容
+                      if (node.classList && node.classList.contains('thinking-content')) {
+                          renderMathInContent(node);
+                      }
+                      // 渲染所有新添加的内容
+                      const thinkingElements = node.querySelectorAll && node.querySelectorAll('.thinking-content, .prose');
+                      if (thinkingElements) {
+                          thinkingElements.forEach(el => renderMathInContent(el));
+                      }
+                  }
+              });
+          });
+      });
+      
+      observer.observe(document.getElementById('chatMessages'), {
+          childList: true,
+          subtree: true
+      });
+  }
 });
 
 </script>
