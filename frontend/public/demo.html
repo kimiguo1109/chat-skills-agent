@@ -812,32 +812,23 @@ function handleStreamChunk(responseId, data) {
         // 生成完成，渲染最终结果
         if (statusEl) statusEl.remove();
         
-        // 🆕 隐藏content文本区域（原始JSON），显示格式化的卡片
-        const contentSection = document.getElementById(`${responseId}-content-section`);
-        if (contentSection) {
-            // 更新标题为"完成"
-            const contentTitle = contentSection.querySelector('span.text-sm');
-            if (contentTitle) {
-                contentTitle.textContent = '✅ JSON编写完成';
-                contentTitle.classList.remove('text-green-700', 'dark:text-green-400');
-                contentTitle.classList.add('text-primary');
-            }
-        }
+        // 🆕 显示Plan内部的最终结果区域
+        const planFinalResult = document.querySelector('#plan-final-result');
+        const planFinalContent = document.querySelector('#plan-final-content');
         
-        // 渲染最终格式化的卡片UI
-        if (finalEl && data.content) {
-            finalEl.classList.remove('hidden');
+        if (planFinalResult && planFinalContent && data.content) {
+            planFinalResult.classList.remove('hidden');
             const contentType = data.content_type;
             
             // 渲染不同类型的卡片
             if (contentType === 'quiz_set' && data.content.questions) {
-                finalEl.innerHTML = renderQuizCard(data.content);
+                planFinalContent.innerHTML = renderQuizCard(data.content);
             } else if (contentType === 'explanation' && data.content.concept) {
-                finalEl.innerHTML = renderExplainCard(data.content);
+                planFinalContent.innerHTML = renderExplainCard(data.content);
             } else if (contentType === 'flashcard_set' && data.content.cards) {
-                finalEl.innerHTML = renderFlashcardSet(data.content);
+                planFinalContent.innerHTML = renderFlashcardSet(data.content);
             } else if (contentType === 'learning_bundle' && data.content.components) {
-                finalEl.innerHTML = renderLearningBundle(data.content);
+                planFinalContent.innerHTML = renderLearningBundle(data.content);
             } else if (contentType === 'mindmap' && data.content.root) {
                 finalEl.innerHTML = renderMindMapCard(data.content);
             } else if (contentType === 'notes' && data.content.structured_notes) {
