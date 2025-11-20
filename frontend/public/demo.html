@@ -1066,6 +1066,26 @@ function handleStreamChunk(responseId, data) {
         // 生成完成，渲染最终结果
         if (statusEl) statusEl.remove();
         
+        // 🆕 如果模型返回了reasoning_summary，用它替换前端提取的summary
+        if (data.content && data.content.reasoning_summary) {
+            const thinkingOverview = document.getElementById(`${responseId}-thinking-overview`);
+            if (thinkingOverview) {
+                const overviewText = document.getElementById(`${responseId}-thinking-overview-text`);
+                const pulseIcon = thinkingOverview.querySelector('.animate-pulse');
+                if (overviewText) {
+                    // 使用模型生成的summary（更准确！）
+                    overviewText.textContent = `✨ ${data.content.reasoning_summary}`;
+                    // 停止动画，变为静态绿色图标
+                    if (pulseIcon) {
+                        pulseIcon.classList.remove('animate-pulse', 'bg-blue-500', 'bg-green-500');
+                        pulseIcon.classList.add('bg-green-600');
+                    }
+                    // 背景变为静态绿色
+                    thinkingOverview.style.backgroundColor = 'rgba(34, 197, 94, 0.15)';
+                }
+            }
+        }
+        
         // 检测是否是Plan Skill
         const planFinalResult = document.querySelector('#plan-final-result');
         const planFinalContent = document.querySelector('#plan-final-content');

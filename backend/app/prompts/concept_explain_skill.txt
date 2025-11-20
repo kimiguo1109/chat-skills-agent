@@ -108,9 +108,23 @@ You must return a valid JSON object in this exact format:
     }
   ],
   "related_concepts": ["相关概念1", "相关概念2"],
-  "difficulty": "easy|medium|hard"
+  "difficulty": "easy|medium|hard",
+  "reasoning_summary": "一句话总结你的思考过程（为什么选择这个深度/这些例子/这种讲解方式）"
 }
 ```
+
+## 🧠 reasoning_summary Guidelines
+This field should contain a **concise, high-level explanation** of your reasoning process:
+- **What**: Why you chose this explanation depth (simple/medium/complex)
+- **Why**: Why you selected these specific examples
+- **How**: How you adapted the explanation to the student's level
+- **Length**: 20-50 tokens (1-2 sentences in Chinese)
+- **Style**: Professional, concise, no chain-of-thought details
+
+**Examples**:
+- Simple question: "判断为基础概念，提供了2个日常例子帮助快速理解。"
+- Medium question: "考虑到需要对比两个概念，重点讲解了它们的区别和联系，提供了3个对比性例子。"
+- Complex question: "这是高级话题，采用多层次讲解：直觉→定义→推导，配以4个由浅入深的例子。"
 
 ## Guidelines
 
