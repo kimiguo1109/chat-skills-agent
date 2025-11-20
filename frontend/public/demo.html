@@ -931,7 +931,10 @@ function renderExplanationStreamingUI(partialData) {
 }
 
 function handleStreamChunk(responseId, data) {
-    console.log('[Stream]', data.type, data);
+    // 🐛 只记录非流式事件，避免log刷屏
+    if (!['thinking', 'content'].includes(data.type)) {
+        console.log('[Stream]', data.type, data);
+    }
     
     const statusEl = document.getElementById(`${responseId}-status`);
     const planPreviewEl = document.getElementById(`${responseId}-plan-preview`);
@@ -1250,11 +1253,7 @@ function handleStreamChunk(responseId, data) {
                         const shouldUpdate = fullText.length % 200 < 10 || /[.。!！?？]/.test(data.text);
                         if (shouldUpdate) {
                             const motivation = extractThinkingMotivation(fullText);
-                            console.log(`[DEBUG] Plan Step ${currentStep} - extracted motivation:`, motivation);
-                            console.log(`[DEBUG] fullText length:`, fullText.length);
-                            console.log(`[DEBUG] fullText preview:`, fullText.slice(0, 200));
                             if (motivation && summaryText.textContent !== motivation) {
-                                console.log(`[DEBUG] Updating summary from "${summaryText.textContent}" to "${motivation}"`);
                                 summaryText.textContent = motivation;
                                 recordOverviewChange(responseId, motivation);
                             }
@@ -1410,10 +1409,6 @@ function handleStreamChunk(responseId, data) {
         if (isPlanSkill && currentStep) {
             // Plan Skill：在步骤的output区域流式渲染内容
             const stepOutputContent = document.getElementById(`plan-step-${currentStep}-output-content`);
-            console.log(`[DEBUG] Plan Skill content event - step ${currentStep}`);
-            console.log(`[DEBUG] stepOutputContent:`, stepOutputContent);
-            console.log(`[DEBUG] data.accumulated length:`, data.accumulated ? data.accumulated.length : 0);
-            console.log(`[DEBUG] accumulated preview:`, data.accumulated ? data.accumulated.slice(0, 200) : 'null');
             
             if (stepOutputContent) {
                 // 显示output容器
@@ -1425,26 +1420,16 @@ function handleStreamChunk(responseId, data) {
                 // 流式渲染内容
                 try {
                     const partialData = JSON.parse(data.accumulated);
-                    console.log(`[DEBUG] Parsed partialData:`, partialData);
-                    console.log(`[DEBUG] partialData.questions:`, partialData.questions);
-                    console.log(`[DEBUG] partialData.cards:`, partialData.cards);
-                    console.log(`[DEBUG] partialData.concept:`, partialData.concept);
                     
                     if (partialData.questions && Array.isArray(partialData.questions)) {
-                        console.log(`[DEBUG] Rendering quiz streaming UI with ${partialData.questions.length} questions`);
                         stepOutputContent.innerHTML = renderQuizStreamingUI(partialData);
                     } else if (partialData.cards && Array.isArray(partialData.cards)) {
-                        console.log(`[DEBUG] Rendering flashcard streaming UI with ${partialData.cards.length} cards`);
                         stepOutputContent.innerHTML = renderFlashcardStreamingUI(partialData);
                     } else if (partialData.concept) {
-                        console.log(`[DEBUG] Rendering explanation streaming UI`);
                         stepOutputContent.innerHTML = renderExplanationStreamingUI(partialData);
-                    } else {
-                        console.warn(`[DEBUG] Unknown content type in partialData`);
                     }
                 } catch (e) {
                     // JSON不完整，显示加载状态
-                    console.warn(`[DEBUG] JSON parse error:`, e);
                     if (!stepOutputContent.innerHTML) {
                         stepOutputContent.innerHTML = '<div class="text-center py-4"><div class="animate-pulse text-blue-500">📝 正在生成内容...</div></div>';
                     }
