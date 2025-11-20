@@ -82,7 +82,7 @@ execution_plan:
       input_mapping:
         subject: "{input.subject}"
         topic: "{input.topic}"
-        quantity: 5
+        quantity: "{input.flashcard_quantity|default:5}"  # 🔥 支持灵活控制数量，默认5
         difficulty: "{input.difficulty}"
         # 🔥 传递完整解释内容，确保卡片内容与讲解一致
         reference_explanation: "{context.explain}"  # 完整的解释结果
@@ -104,7 +104,7 @@ execution_plan:
       input_mapping:
         subject: "{input.subject}"
         topic: "{input.topic}"
-        quantity: 3
+        quantity: "{input.quiz_quantity|default:3}"  # 🔥 支持灵活控制数量，默认3
         difficulty: "{input.difficulty}"
         # 🔥 传递完整解释和卡片内容，确保题目覆盖所有知识点
         reference_explanation: "{context.explain}"     # 完整的解释结果

@@ -1045,7 +1045,7 @@ function handleStreamChunk(responseId, data) {
         scrollToBottom();
     } 
     else if (data.type === 'content') {
-        // 🆕 显示微妙的生成进度（不显示raw content，但给用户反馈）
+        // 🆕 显示内容生成进度（进度条+字符计数）
         // 检测是否是Plan Skill
         const statusText = statusEl?.querySelector('span')?.textContent || '';
         const isPlanSkill = statusText.includes('Step') && statusText.includes('/');
@@ -1053,37 +1053,46 @@ function handleStreamChunk(responseId, data) {
         const currentStep = stepMatch ? parseInt(stepMatch[1]) : null;
         
         if (isPlanSkill && currentStep) {
-            // Plan Skill：更新thinking summary显示生成进度，添加动画
+            // Plan Skill：更新thinking summary显示生成进度
             const thinkingSummary = document.getElementById(`plan-step-${currentStep}-thinking-summary`);
             if (thinkingSummary) {
                 const summaryText = thinkingSummary.querySelector('.thinking-summary-text');
                 const pulseIcon = thinkingSummary.querySelector('.animate-pulse');
-                if (summaryText && !summaryText.textContent.includes('正在生成内容')) {
-                    summaryText.textContent = `📝 正在生成内容...`;
-                    // 更改图标颜色为绿色，表示进入新阶段
+                
+                // 统计累计字符数（从accumulated字段）
+                const contentLength = data.accumulated ? data.accumulated.length : 0;
+                
+                if (summaryText) {
+                    summaryText.textContent = `📝 正在生成内容... (${contentLength} chars)`;
+                    // 更改图标颜色为绿色
                     if (pulseIcon) {
-                        pulseIcon.classList.remove('bg-blue-500');
+                        pulseIcon.classList.remove('bg-blue-500', 'bg-yellow-500');
                         pulseIcon.classList.add('bg-green-500');
                     }
                 }
             }
         } else {
-            // 普通Skill：更新thinking overview显示生成进度，添加动画
-            // 🔧 修复：重新获取thinkingOverview元素
+            // 普通Skill：更新thinking overview显示生成进度
             const thinkingOverview = document.getElementById(`${responseId}-thinking-overview`);
             if (thinkingOverview) {
                 const overviewText = document.getElementById(`${responseId}-thinking-overview-text`);
                 const pulseIcon = thinkingOverview.querySelector('.animate-pulse');
-                if (overviewText && !overviewText.textContent.includes('正在生成内容')) {
-                    overviewText.textContent = '📝 正在生成内容...';
-                    // 更改图标颜色为绿色，表示进入新阶段
+                
+                // 统计累计字符数
+                const contentLength = data.accumulated ? data.accumulated.length : 0;
+                
+                if (overviewText) {
+                    overviewText.textContent = `📝 正在生成内容... (${contentLength} chars)`;
+                    // 更改图标颜色为绿色
                     if (pulseIcon) {
-                        pulseIcon.classList.remove('bg-blue-500');
+                        pulseIcon.classList.remove('bg-blue-500', 'bg-yellow-500');
                         pulseIcon.classList.add('bg-green-500');
                     }
                     // 添加渐变动画
-                    thinkingOverview.style.transition = 'background-color 0.5s ease';
-                    thinkingOverview.style.backgroundColor = 'rgba(34, 197, 94, 0.1)';
+                    if (!thinkingOverview.style.backgroundColor) {
+                        thinkingOverview.style.transition = 'background-color 0.5s ease';
+                        thinkingOverview.style.backgroundColor = 'rgba(34, 197, 94, 0.1)';
+                    }
                 }
             }
         }
@@ -1094,27 +1103,29 @@ function handleStreamChunk(responseId, data) {
         // 生成完成，渲染最终结果
         if (statusEl) statusEl.remove();
         
-        // 🆕 如果模型返回了reasoning_summary，用它替换前端提取的summary
+        // 🆕 优先使用模型生成的reasoning_summary
         if (data.content && data.content.reasoning_summary) {
             const thinkingOverview = document.getElementById(`${responseId}-thinking-overview`);
             if (thinkingOverview) {
                 const overviewText = document.getElementById(`${responseId}-thinking-overview-text`);
                 const pulseIcon = thinkingOverview.querySelector('.animate-pulse');
                 if (overviewText) {
-                    // 使用模型生成的summary（更准确！）
-                    // 🔥 完整显示，不截断，不修改
+                    // 🔥 使用模型生成的summary（优先级最高）
                     overviewText.textContent = `✨ ${data.content.reasoning_summary}`;
-                    overviewText.style.whiteSpace = 'normal';  // 正常换行
-                    overviewText.style.wordBreak = 'break-word';  // 长单词自动换行
+                    overviewText.style.whiteSpace = 'normal';
+                    overviewText.style.wordBreak = 'break-word';
                     // 停止动画，变为静态绿色图标
                     if (pulseIcon) {
                         pulseIcon.classList.remove('animate-pulse', 'bg-blue-500', 'bg-green-500', 'bg-yellow-500');
                         pulseIcon.classList.add('bg-green-600');
                     }
-                    // 背景变为静态绿色
                     thinkingOverview.style.backgroundColor = 'rgba(34, 197, 94, 0.15)';
                 }
             }
+        } else {
+            // ⚠️ Fallback：如果没有reasoning_summary，保留"正在生成内容"状态
+            // 不再使用extractThinkingSummary提取（避免中英文混杂）
+            console.log('No reasoning_summary in done event, keeping current status');
         }
         
         // 检测是否是Plan Skill

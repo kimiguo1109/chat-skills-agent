@@ -66,7 +66,7 @@ models:
   primary: "moonshotai/kimi-k2-thinking"  # 🆕 使用 Kimi thinking 模型
   fallback: "moonshotai/kimi-k2-thinking"
 
-thinking_budget: 128  # ⚡⚡⚡ 极限优化：降低至128，快速生成题目
+thinking_budget: 64  # ⚡⚡⚡⚡ 超极限优化：降低至64，Plan Skill快速响应
 temperature: 1.0  # ⚡⚡⚡ 极限优化：提高至1.0，最大化生成速度
 
 context:
