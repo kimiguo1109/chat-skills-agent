@@ -312,13 +312,15 @@ class PlanSkillExecutor:
                         logger.info(f"📊 累计Token消耗: ~{self.token_usage['total']} tokens")
                         logger.info(f"{'─'*60}")
                         
-                        # 🆕 发送步骤完成状态
+                        # 🆕 发送步骤完成状态（包含result用于前端即时显示）
                         yield {
                             "type": "step_done",
                             "step_order": step_order,
                             "total_steps": total_steps,
                             "step_name": step_name,
-                            "tokens_used": tokens_used
+                            "skill_id": skill_id,
+                            "tokens_used": tokens_used,
+                            "result": result  # 🆕 包含完整结果供前端渲染
                         }
                     elif chunk["type"] == "error":
                         # Step失败
