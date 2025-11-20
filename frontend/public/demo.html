@@ -642,12 +642,33 @@ function createStreamingResponseContainer(responseId) {
                 <!-- 🆕 Plan预览区域（最上面，独立显示） -->
                 <div id="${responseId}-plan-preview" class="w-full hidden"></div>
                 
-                <!-- 普通Skill的Thinking Overview（简洁显示） -->
+                <!-- 普通Skill的Thinking Summary（简洁概括） -->
                 <div id="${responseId}-thinking-overview" class="w-full px-4 py-3 rounded-lg bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 hidden">
                     <div class="flex items-center gap-2">
                         <div class="w-2 h-2 rounded-full bg-blue-500 animate-pulse"></div>
                         <span class="text-sm italic text-blue-700 dark:text-blue-400" id="${responseId}-thinking-overview-text">正在思考...</span>
                     </div>
+                </div>
+                
+                <!-- 普通Skill的完整思考过程区域（可折叠，默认展开） -->
+                <div id="${responseId}-thinking-section" class="w-full rounded-xl border border-border-light dark:border-border-dark bg-gray-50 dark:bg-gray-900/50 overflow-hidden hidden">
+                    <details class="group" open>
+                        <summary class="flex items-center justify-between px-4 py-3 cursor-pointer hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors">
+                            <div class="flex items-center gap-2">
+                                <svg class="w-5 h-5 text-primary transition-transform group-open:rotate-90" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"></path>
+                                </svg>
+                                <span class="text-sm font-semibold text-text-light-primary dark:text-text-dark-primary">💭 完整思考过程</span>
+                            </div>
+                            <button onclick="document.getElementById('${responseId}-thinking-section').classList.add('hidden')" 
+                                    class="text-xs text-text-light-secondary dark:text-text-dark-secondary hover:text-primary px-2 py-1 rounded hover:bg-gray-200 dark:hover:bg-gray-700">
+                                隐藏
+                            </button>
+                        </summary>
+                        <div class="px-4 py-3 border-t border-border-light dark:border-border-dark max-h-96 overflow-y-auto">
+                            <pre id="${responseId}-thinking-content" class="whitespace-pre-wrap text-sm text-text-light-secondary dark:text-text-dark-secondary leading-relaxed"></pre>
+                        </div>
+                    </details>
                 </div>
                 
                 <!-- 普通Skill的最终结果区域（格式化的卡片UI） -->
@@ -742,15 +763,21 @@ function handleStreamChunk(responseId, data) {
                 statusLabel.classList.add('bg-blue-100', 'dark:bg-blue-900', 'text-blue-700', 'dark:text-blue-300');
             }
             
-            // 显示thinking overview（简洁概括）
-            const thinkingOverview = document.getElementById(`plan-step-${data.step_order}-thinking-overview`);
-            if (thinkingOverview) {
-                thinkingOverview.classList.remove('hidden');
+            // 显示thinking summary（简洁概括）
+            const thinkingSummary = document.getElementById(`plan-step-${data.step_order}-thinking-summary`);
+            if (thinkingSummary) {
+                thinkingSummary.classList.remove('hidden');
                 // 设置默认的thinking状态文字
-                const overviewText = thinkingOverview.querySelector('.thinking-overview-text');
-                if (overviewText) {
-                    overviewText.textContent = `正在${data.step_name}...`;
+                const summaryText = thinkingSummary.querySelector('.thinking-summary-text');
+                if (summaryText) {
+                    summaryText.textContent = `正在${data.step_name}...`;
                 }
+            }
+            
+            // 显示完整thinking区域（可折叠）
+            const thinkingFull = document.getElementById(`plan-step-${data.step_order}-thinking-full`);
+            if (thinkingFull) {
+                thinkingFull.classList.remove('hidden');
             }
             
             // 显示时间追踪
@@ -817,28 +844,21 @@ function handleStreamChunk(responseId, data) {
                 statusLabel.classList.add('bg-green-100', 'dark:bg-green-900', 'text-green-700', 'dark:text-green-300');
             }
             
-            // 更新thinking overview为完成状态
-            const thinkingOverview = document.getElementById(`plan-step-${data.step_order}-thinking-overview`);
-            if (thinkingOverview) {
-                const overviewText = thinkingOverview.querySelector('.thinking-overview-text');
-                if (overviewText) {
-                    overviewText.textContent = `已完成${data.step_name}`;
+            // 更新thinking summary为完成状态
+            const thinkingSummary = document.getElementById(`plan-step-${data.step_order}-thinking-summary`);
+            if (thinkingSummary) {
+                const summaryText = thinkingSummary.querySelector('.thinking-summary-text');
+                if (summaryText) {
+                    summaryText.textContent = `已完成${data.step_name}`;
+                    summaryText.classList.remove('italic');
                     // 移除动画
-                    const pulseIcon = thinkingOverview.querySelector('.animate-pulse');
+                    const pulseIcon = thinkingSummary.querySelector('.animate-pulse');
                     if (pulseIcon) {
                         pulseIcon.classList.remove('animate-pulse');
                         pulseIcon.classList.add('bg-green-500');
                         pulseIcon.classList.remove('bg-blue-500');
                     }
                 }
-            }
-            
-            // 🆕 在详细内容区域显示该步骤的结果（可选展开）
-            const detailsSection = document.getElementById(`plan-step-${data.step_order}-details`);
-            const detailContent = document.getElementById(`plan-step-${data.step_order}-detail-content`);
-            if (detailsSection && detailContent && data.result_summary) {
-                detailsSection.classList.remove('hidden');
-                detailContent.innerHTML = `<p class="text-sm text-text-light-secondary dark:text-text-dark-secondary">${data.result_summary}</p>`;
             }
         }
     }
@@ -870,13 +890,95 @@ function handleStreamChunk(responseId, data) {
         const currentStep = stepMatch ? parseInt(stepMatch[1]) : null;
         
         if (isPlanSkill && currentStep) {
-            // Plan Skill：不显示流式thinking，只保留静默累积用于最终展示
-            // Thinking overview已经在step_start时设置好了
+            // Plan Skill：更新完整thinking内容（流式显示）
+            const stepThinkingContent = document.getElementById(`plan-step-${currentStep}-thinking-content`);
+            if (stepThinkingContent) {
+                // 累积文本
+                stepThinkingContent.textContent += data.text;
+                
+                // 简单的Markdown渲染：**粗体**
+                let renderedText = stepThinkingContent.textContent
+                    .replace(/\*\*(.*?)\*\*/g, '<strong class="font-semibold text-text-light-primary dark:text-text-dark-primary">$1</strong>');
+                
+                stepThinkingContent.innerHTML = renderedText;
+                
+                // LaTeX渲染（KaTeX）
+                if (typeof renderMathInElement !== 'undefined') {
+                    try {
+                        renderMathInElement(stepThinkingContent, {
+                            delimiters: [
+                                {left: '$$', right: '$$', display: true},
+                                {left: '$', right: '$', display: false},
+                                {left: '\\[', right: '\\]', display: true},
+                                {left: '\\(', right: '\\)', display: false}
+                            ],
+                            throwOnError: false
+                        });
+                    } catch (e) {
+                        console.warn('LaTeX rendering error:', e);
+                    }
+                }
+            }
+            
+            // 同时更新thinking summary（提取第一句话作为概括）
+            const thinkingSummary = document.getElementById(`plan-step-${currentStep}-thinking-summary`);
+            if (thinkingSummary && stepThinkingContent) {
+                const summaryText = thinkingSummary.querySelector('.thinking-summary-text');
+                if (summaryText) {
+                    const fullText = stepThinkingContent.textContent;
+                    // 提取第一句话（最多50个字符）
+                    const firstSentence = fullText.split(/[。！？\n]/)[0].trim();
+                    const summary = firstSentence.slice(0, 50) + (firstSentence.length > 50 ? '...' : '');
+                    summaryText.textContent = summary || `正在思考...`;
+                }
+            }
         } else {
-            // 普通Skill：也只显示thinking overview，不显示完整流式
-            // 累积thinking内容用于最终的折叠区域展示
+            // 普通Skill：显示完整thinking内容（流式）
+            if (thinkingSection && thinkingSection.classList.contains('hidden')) {
+                thinkingSection.classList.remove('hidden');
+            }
             if (thinkingEl) {
+                // 累积文本并渲染Markdown + LaTeX
                 thinkingEl.textContent += data.text;
+                
+                // 简单的Markdown渲染：**粗体**
+                let renderedText = thinkingEl.textContent
+                    .replace(/\*\*(.*?)\*\*/g, '<strong class="font-semibold text-text-light-primary dark:text-text-dark-primary">$1</strong>');
+                
+                thinkingEl.innerHTML = renderedText;
+                
+                // LaTeX渲染（KaTeX）
+                if (typeof renderMathInElement !== 'undefined') {
+                    try {
+                        renderMathInElement(thinkingEl, {
+                            delimiters: [
+                                {left: '$$', right: '$$', display: true},
+                                {left: '$', right: '$', display: false},
+                                {left: '\\[', right: '\\]', display: true},
+                                {left: '\\(', right: '\\)', display: false}
+                            ],
+                            throwOnError: false
+                        });
+                    } catch (e) {
+                        console.warn('LaTeX rendering error:', e);
+                    }
+                }
+            }
+            
+            // 同时更新thinking summary
+            const thinkingOverview = document.getElementById(`${responseId}-thinking-overview`);
+            if (thinkingOverview) {
+                if (thinkingOverview.classList.contains('hidden')) {
+                    thinkingOverview.classList.remove('hidden');
+                }
+                const overviewText = document.getElementById(`${responseId}-thinking-overview-text`);
+                if (overviewText && thinkingEl) {
+                    const fullText = thinkingEl.textContent;
+                    // 提取第一句话作为summary
+                    const firstSentence = fullText.split(/[。！？\n]/)[0].trim();
+                    const summary = firstSentence.slice(0, 50) + (firstSentence.length > 50 ? '...' : '');
+                    overviewText.textContent = summary || '正在思考...';
+                }
             }
         }
         
@@ -1054,29 +1156,27 @@ function renderPlanPreview(topic, stepsPreview, totalSteps) {
                                 ${escapeHtml(step.skill_id)}
                             </span>
                         </div>
-                        <!-- 🆕 Thinking Overview（简洁的一句话概括） -->
-                        <div id="plan-step-${stepNumber}-thinking-overview" class="hidden mt-3 flex items-center gap-2 text-xs text-blue-700 dark:text-blue-400">
+                        <!-- 🆕 Thinking Summary（简洁的一句话概括，始终可见） -->
+                        <div id="plan-step-${stepNumber}-thinking-summary" class="hidden mt-3 flex items-center gap-2 text-xs text-blue-700 dark:text-blue-400">
                             <div class="w-2 h-2 rounded-full bg-blue-500 animate-pulse"></div>
-                            <span class="thinking-overview-text italic">正在思考...</span>
+                            <span class="thinking-summary-text italic">正在思考...</span>
                         </div>
                     </div>
                 </div>
                 
-                <!-- 🆕 该步骤的详细内容（可选展开，默认隐藏） -->
-                <div id="plan-step-${stepNumber}-details" class="hidden border-t border-border-light dark:border-border-dark bg-gray-50 dark:bg-gray-900/30">
-                    <details class="group">
+                <!-- 🆕 该步骤的完整Thinking内容（可折叠，默认展开） -->
+                <div id="plan-step-${stepNumber}-thinking-full" class="hidden border-t border-border-light dark:border-border-dark bg-gray-50 dark:bg-gray-900/30">
+                    <details class="group" open>
                         <summary class="flex items-center justify-between px-4 py-2 cursor-pointer hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors">
                             <div class="flex items-center gap-2">
                                 <svg class="w-4 h-4 text-primary transition-transform group-open:rotate-90" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"></path>
                                 </svg>
-                                <span class="text-xs font-semibold text-text-light-primary dark:text-text-dark-primary">查看详细内容</span>
+                                <span class="text-xs font-semibold text-text-light-primary dark:text-text-dark-primary">💭 完整思考过程</span>
                             </div>
                         </summary>
                         <div class="px-4 py-3 border-t border-border-light dark:border-border-dark max-h-96 overflow-y-auto">
-                            <div id="plan-step-${stepNumber}-detail-content" class="prose prose-sm dark:prose-invert max-w-none">
-                                <!-- 步骤完成后的详细内容展示在这里 -->
-                            </div>
+                            <pre id="plan-step-${stepNumber}-thinking-content" class="whitespace-pre-wrap text-xs text-text-light-secondary dark:text-text-dark-secondary leading-relaxed"></pre>
                         </div>
                     </details>
                 </div>
