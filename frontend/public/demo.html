@@ -1173,8 +1173,48 @@ function handleStreamChunk(responseId, data) {
                 }
             }
             
-            // 🔥 Plan Skill不提取thinking片段，保持"正在XXX..."状态
-            // reasoning_summary会在step_done时显示，避免中英文混杂
+            // 🔥 Plan Skill也动态提取thinking动机
+            const thinkingSummary = document.getElementById(`plan-step-${currentStep}-thinking-summary`);
+            if (thinkingSummary) {
+                const summaryText = thinkingSummary.querySelector('.thinking-summary-text');
+                if (summaryText && stepThinkingContent) {
+                    const fullText = stepThinkingContent.textContent;
+                    
+                    // 检测thinking即将结束的关键词
+                    const thinkingEndKeywords = [
+                        'Let me craft the JSON',
+                        'craft the JSON response',
+                        'following the exact format',
+                        '按照要求的格式',
+                        '现在开始生成JSON',
+                        '现在生成JSON'
+                    ];
+                    const isThinkingEnding = thinkingEndKeywords.some(kw => fullText.includes(kw));
+                    
+                    if (isThinkingEnding && !summaryText.textContent.includes('准备生成')) {
+                        // 过渡阶段
+                        const transitionText = '⏳ 准备生成内容...';
+                        summaryText.textContent = transitionText;
+                        recordOverviewChange(responseId, transitionText);
+                        
+                        const pulseIcon = thinkingSummary.querySelector('.animate-pulse');
+                        if (pulseIcon) {
+                            pulseIcon.classList.remove('bg-blue-500');
+                            pulseIcon.classList.add('bg-yellow-500');
+                        }
+                    } else if (!isThinkingEnding) {
+                        // 动态提取思考动机
+                        const shouldUpdate = fullText.length % 200 < 10 || /[.。!！?？]/.test(data.text);
+                        if (shouldUpdate) {
+                            const motivation = extractThinkingMotivation(fullText);
+                            if (motivation && summaryText.textContent !== motivation) {
+                                summaryText.textContent = motivation;
+                                recordOverviewChange(responseId, motivation);
+                            }
+                        }
+                    }
+                }
+            }
         } else {
             // 普通Skill：显示完整thinking内容（流式）
             if (thinkingSection && thinkingSection.classList.contains('hidden')) {

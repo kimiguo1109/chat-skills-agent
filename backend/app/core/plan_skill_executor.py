@@ -436,7 +436,7 @@ class PlanSkillExecutor:
         # 🆕 生成Plan的reasoning_summary
         components_summary = []
         for comp in bundle.get('components', []):
-            comp_type = comp.get('type', 'unknown')
+            comp_type = comp.get('component_type', 'unknown')  # ✅ 修正字段名
             if comp_type == 'explanation':
                 components_summary.append('概念讲解')
             elif comp_type == 'flashcard_set':
