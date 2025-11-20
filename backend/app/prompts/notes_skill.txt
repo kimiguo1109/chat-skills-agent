@@ -15,10 +15,10 @@ Instructions:
 - Keep total length: 300-500 words
 - Base ONLY on the reference content above
 
-Thinking Guidelines:
-- Think efficiently: identify key themes, plan section structure
-- DO NOT draft full JSON in thinking - just outline sections
-- Keep reasoning brief and focused
+Thinking Guidelines (CRITICAL):
+⚠️ DO NOT draft full JSON or write complete bullet points in thinking.
+⚠️ Thinking = Identify 2-4 section themes only. Content = Actual generation.
+Example thinking: "Section 1: Root causes. Section 2: Policy failures. Section 3: Escalation. Section 4: Lessons." DONE.
 
 Output Format:
 {{
