@@ -174,7 +174,7 @@ class SkillOrchestrator:
             async for chunk in self.llm_client.generate_stream(
                 prompt=prompt,
                 model=skill.models.get("primary", self.llm_client.model),  # 使用 llm_client 的默认模型
-                thinking_budget=skill.thinking_budget or 256,  # ⚡ 快速思考模式
+                thinking_budget=skill.thinking_budget or 64,  # ⚡⚡⚡ 极速思考：64 tokens（~5-10秒）
                 buffer_size=1,  # ⚡⚡⚡⚡ 极限优化：每个字符立即发送
                 temperature=getattr(skill, 'temperature', 1.0)  # ⚡⚡⚡ 最大化速度
             ):
@@ -1184,7 +1184,7 @@ class SkillOrchestrator:
         async for chunk in self.gemini_client.generate_stream(
             prompt=full_prompt,
             model=getattr(skill, 'models', {}).get('primary', 'moonshotai/kimi-k2-thinking'),
-            thinking_budget=getattr(skill, 'thinking_budget', 256),
+            thinking_budget=getattr(skill, 'thinking_budget', 64),  # ⚡⚡⚡ 极速思考：64 tokens
             buffer_size=1,
             temperature=getattr(skill, 'temperature', 1.0)
         ):
