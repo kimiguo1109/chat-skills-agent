@@ -641,6 +641,45 @@ function createStreamingResponseContainer(responseId) {
                 
                 <!-- 🆕 Plan预览区域（最上面，独立显示） -->
                 <div id="${responseId}-plan-preview" class="w-full hidden"></div>
+                
+                <!-- 普通Skill的思考过程区域（可折叠，带滚动条） -->
+                <div id="${responseId}-thinking-section" class="w-full rounded-xl border border-border-light dark:border-border-dark bg-gray-50 dark:bg-gray-900/50 overflow-hidden hidden">
+                    <details class="group" open>
+                        <summary class="flex items-center justify-between px-4 py-3 cursor-pointer hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors">
+                            <div class="flex items-center gap-2">
+                                <svg class="w-5 h-5 text-primary transition-transform group-open:rotate-90" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"></path>
+                                </svg>
+                                <span class="text-sm font-semibold text-text-light-primary dark:text-text-dark-primary">💭 思考过程</span>
+                            </div>
+                            <button onclick="document.getElementById('${responseId}-thinking-section').classList.add('hidden')" 
+                                    class="text-xs text-text-light-secondary dark:text-text-dark-secondary hover:text-primary px-2 py-1 rounded hover:bg-gray-200 dark:hover:bg-gray-700">
+                                隐藏
+                            </button>
+                        </summary>
+                        <div class="px-4 py-3 border-t border-border-light dark:border-border-dark max-h-96 overflow-y-auto">
+                            <pre id="${responseId}-thinking-content" class="whitespace-pre-wrap text-sm text-text-light-secondary dark:text-text-dark-secondary leading-relaxed"></pre>
+                        </div>
+                    </details>
+                </div>
+                
+                <!-- 普通Skill的Content流式显示区域（JSON原始文本） -->
+                <div id="${responseId}-content-section" class="w-full rounded-xl border border-border-light dark:border-border-dark bg-surface-light dark:bg-surface-dark overflow-hidden hidden">
+                    <div class="px-4 py-3 bg-green-50 dark:bg-green-900/20 border-b border-border-light dark:border-border-dark">
+                        <div class="flex items-center gap-2">
+                            <svg class="w-5 h-5 text-green-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path>
+                            </svg>
+                            <span class="text-sm font-semibold text-green-700 dark:text-green-400">✍️ 正在编写完整的JSON...</span>
+                        </div>
+                    </div>
+                    <div class="px-4 py-3 max-h-96 overflow-y-auto">
+                        <pre id="${responseId}-content-text" class="whitespace-pre-wrap text-xs font-mono text-text-light-primary dark:text-text-dark-primary leading-relaxed"></pre>
+                    </div>
+                </div>
+                
+                <!-- 普通Skill的最终结果区域（格式化的卡片UI） -->
+                <div id="${responseId}-final" class="w-full hidden"></div>
             </div>
         </div>
     `;
@@ -653,6 +692,11 @@ function handleStreamChunk(responseId, data) {
     
     const statusEl = document.getElementById(`${responseId}-status`);
     const planPreviewEl = document.getElementById(`${responseId}-plan-preview`);
+    const thinkingSection = document.getElementById(`${responseId}-thinking-section`);
+    const thinkingEl = document.getElementById(`${responseId}-thinking-content`);
+    const contentSection = document.getElementById(`${responseId}-content-section`);
+    const contentTextEl = document.getElementById(`${responseId}-content-text`);
+    const finalEl = document.getElementById(`${responseId}-final`);
     
     if (data.type === 'status') {
         if (statusEl) {
@@ -824,14 +868,14 @@ function handleStreamChunk(responseId, data) {
         }
     } 
     else if (data.type === 'thinking') {
-        // 🆕 将thinking追加到对应步骤的thinking区域
-        // 从statusEl获取当前步骤编号
+        // 检测是否是Plan Skill（通过status文本判断）
         const statusText = statusEl?.querySelector('span')?.textContent || '';
+        const isPlanSkill = statusText.includes('Step') && statusText.includes('/');
         const stepMatch = statusText.match(/Step (\d+)\//);
         const currentStep = stepMatch ? parseInt(stepMatch[1]) : null;
         
-        if (currentStep) {
-            // 更新折叠区域的完整thinking
+        if (isPlanSkill && currentStep) {
+            // Plan Skill：更新对应步骤的thinking
             const stepThinkingEl = document.getElementById(`plan-step-${currentStep}-thinking`);
             if (stepThinkingEl) {
                 // 累积文本
@@ -861,14 +905,46 @@ function handleStreamChunk(responseId, data) {
                 }
             }
             
-            // 🆕 同时更新实时thinking预览（显示最新的100个字符）
+            // 同时更新实时thinking预览
             const liveThinkingEl = document.getElementById(`plan-step-${currentStep}-live-thinking`);
             if (liveThinkingEl) {
                 const liveThinkingText = liveThinkingEl.querySelector('.step-live-thinking-text');
                 if (liveThinkingText && stepThinkingEl) {
                     const fullText = stepThinkingEl.textContent;
-                    const preview = fullText.slice(-150); // 最后150个字符
+                    const preview = fullText.slice(-150);
                     liveThinkingText.textContent = preview.length < fullText.length ? '...' + preview : preview;
+                }
+            }
+        } else {
+            // 普通Skill：显示在独立的thinking区域
+            if (thinkingSection && thinkingSection.classList.contains('hidden')) {
+                thinkingSection.classList.remove('hidden');
+            }
+            if (thinkingEl) {
+                // 累积文本并渲染Markdown + LaTeX
+                thinkingEl.textContent += data.text;
+                
+                // 简单的Markdown渲染：**粗体**
+                let renderedText = thinkingEl.textContent
+                    .replace(/\*\*(.*?)\*\*/g, '<strong class="font-semibold text-text-light-primary dark:text-text-dark-primary">$1</strong>');
+                
+                thinkingEl.innerHTML = renderedText;
+                
+                // LaTeX渲染（KaTeX）
+                if (typeof renderMathInElement !== 'undefined') {
+                    try {
+                        renderMathInElement(thinkingEl, {
+                            delimiters: [
+                                {left: '$$', right: '$$', display: true},
+                                {left: '$', right: '$', display: false},
+                                {left: '\\[', right: '\\]', display: true},
+                                {left: '\\(', right: '\\)', display: false}
+                            ],
+                            throwOnError: false
+                        });
+                    } catch (e) {
+                        console.warn('LaTeX rendering error:', e);
+                    }
                 }
             }
         }
@@ -876,23 +952,31 @@ function handleStreamChunk(responseId, data) {
         scrollToBottom();
     } 
     else if (data.type === 'content') {
-        // 🆕 将content追加到对应步骤的content区域
+        // 检测是否是Plan Skill
         const statusText = statusEl?.querySelector('span')?.textContent || '';
+        const isPlanSkill = statusText.includes('Step') && statusText.includes('/');
         const stepMatch = statusText.match(/Step (\d+)\//);
         const currentStep = stepMatch ? parseInt(stepMatch[1]) : null;
         
-        if (currentStep) {
+        if (isPlanSkill && currentStep) {
+            // Plan Skill：追加到对应步骤的content区域
             const stepContentContainer = document.getElementById(`plan-step-${currentStep}-content-container`);
             const stepContentEl = document.getElementById(`plan-step-${currentStep}-content`);
             
-            // 显示该步骤的content容器
             if (stepContentContainer && stepContentContainer.classList.contains('hidden')) {
                 stepContentContainer.classList.remove('hidden');
             }
             
-            // 追加content文本
             if (stepContentEl) {
                 stepContentEl.textContent += data.text;
+            }
+        } else {
+            // 普通Skill：显示在独立的content区域
+            if (contentSection && contentSection.classList.contains('hidden')) {
+                contentSection.classList.remove('hidden');
+            }
+            if (contentTextEl) {
+                contentTextEl.textContent += data.text;
             }
         }
         
@@ -902,11 +986,13 @@ function handleStreamChunk(responseId, data) {
         // 生成完成，渲染最终结果
         if (statusEl) statusEl.remove();
         
-        // 🆕 显示Plan内部的最终结果区域
+        // 检测是否是Plan Skill
         const planFinalResult = document.querySelector('#plan-final-result');
         const planFinalContent = document.querySelector('#plan-final-content');
+        const isPlanSkill = planFinalResult && !planFinalResult.classList.contains('hidden');
         
-        if (planFinalResult && planFinalContent && data.content) {
+        if (isPlanSkill && planFinalContent && data.content) {
+            // Plan Skill：渲染到Plan内部
             planFinalResult.classList.remove('hidden');
             const contentType = data.content_type;
             
@@ -919,6 +1005,28 @@ function handleStreamChunk(responseId, data) {
                 planFinalContent.innerHTML = renderFlashcardSet(data.content);
             } else if (contentType === 'learning_bundle' && data.content.components) {
                 planFinalContent.innerHTML = renderLearningBundle(data.content);
+            } else if (contentType === 'mindmap' && data.content.root) {
+                planFinalContent.innerHTML = renderMindMapCard(data.content);
+            } else if (contentType === 'notes' && data.content.structured_notes) {
+                planFinalContent.innerHTML = renderNotesCard(data.content);
+            } else {
+                // 未知类型，显示JSON
+                planFinalContent.innerHTML = `<div class="p-6"><pre class="text-sm">${JSON.stringify(data.content, null, 2)}</pre></div>`;
+            }
+        } else if (finalEl && data.content) {
+            // 普通Skill：渲染到finalEl
+            finalEl.classList.remove('hidden');
+            const contentType = data.content_type;
+            
+            // 渲染不同类型的卡片
+            if (contentType === 'quiz_set' && data.content.questions) {
+                finalEl.innerHTML = renderQuizCard(data.content);
+            } else if (contentType === 'explanation' && data.content.concept) {
+                finalEl.innerHTML = renderExplainCard(data.content);
+            } else if (contentType === 'flashcard_set' && data.content.cards) {
+                finalEl.innerHTML = renderFlashcardSet(data.content);
+            } else if (contentType === 'learning_bundle' && data.content.components) {
+                finalEl.innerHTML = renderLearningBundle(data.content);
             } else if (contentType === 'mindmap' && data.content.root) {
                 finalEl.innerHTML = renderMindMapCard(data.content);
             } else if (contentType === 'notes' && data.content.structured_notes) {

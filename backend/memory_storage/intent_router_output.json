@@ -1,13 +1,13 @@
 {
   "description": "Intent Router 实时输出记录 (Phase 3 架构)",
   "latest": {
-    "timestamp": "2025-11-19T18:21:40.823876",
-    "user_message": "光合作用学习包",
+    "timestamp": "2025-11-20T09:20:04.127290",
+    "user_message": "帮我解释一下光合作用",
     "method": "rule_engine",
     "tokens_used": 0,
     "results": [
       {
-        "intent": "learning_bundle",
+        "intent": "explain_request",
         "topic": "光合作用",
         "confidence": 0.95,
         "parameters": {}
@@ -16,27 +16,13 @@
   },
   "history": [
     {
-      "timestamp": "2025-11-19T18:04:34.813850",
-      "user_message": "光合作用的学习包",
+      "timestamp": "2025-11-20T09:20:04.127290",
+      "user_message": "帮我解释一下光合作用",
       "method": "rule_engine",
       "tokens_used": 0,
       "results": [
         {
-          "intent": "learning_bundle",
-          "topic": "光合作用",
-          "confidence": 0.95,
-          "parameters": {}
-        }
-      ]
-    },
-    {
-      "timestamp": "2025-11-19T18:21:40.823876",
-      "user_message": "光合作用学习包",
-      "method": "rule_engine",
-      "tokens_used": 0,
-      "results": [
-        {
-          "intent": "learning_bundle",
+          "intent": "explain_request",
           "topic": "光合作用",
           "confidence": 0.95,
           "parameters": {}
@@ -45,8 +31,8 @@
     }
   ],
   "stats": {
-    "total_requests": 2,
-    "rule_based_success": 2,
+    "total_requests": 1,
+    "rule_based_success": 1,
     "llm_fallback": 0,
     "rule_success_rate": "100.0%"
   }
