@@ -433,10 +433,29 @@ class PlanSkillExecutor:
         logger.info(f"⏱️  预计学习时间: {bundle.get('estimated_time_minutes')} 分钟")
         logger.info(f"{'='*60}\n")
         
-        # 🆕 发送Plan完成状态
+        # 🆕 生成Plan的reasoning_summary
+        components_summary = []
+        for comp in bundle.get('components', []):
+            comp_type = comp.get('type', 'unknown')
+            if comp_type == 'explanation':
+                components_summary.append('概念讲解')
+            elif comp_type == 'flashcard_set':
+                card_count = len(comp.get('content', {}).get('cards', []))
+                components_summary.append(f'{card_count}张抽认卡')
+            elif comp_type == 'quiz_set':
+                quiz_count = len(comp.get('content', {}).get('questions', []))
+                components_summary.append(f'{quiz_count}道练习题')
+        
+        plan_reasoning_summary = f"完成学习包生成，包含{len(steps)}个步骤：{' + '.join(components_summary)}"
+        
+        # 🆕 发送Plan完成状态（包含reasoning_summary）
         yield {
             "type": "done",
-            "content": bundle,
+            "thinking": "",  # Plan本身没有thinking过程
+            "content": {
+                **bundle,
+                "reasoning_summary": plan_reasoning_summary  # 🆕 添加reasoning_summary
+            },
             "content_type": "learning_bundle"
         }
     

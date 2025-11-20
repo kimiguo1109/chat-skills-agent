@@ -674,21 +674,54 @@ function createStreamingResponseContainer(responseId) {
     scrollToBottom();
 }
 
+// 🐛 记录所有显示过的overview（用于调试）
+const thinkingOverviewHistory = new Map(); // responseId -> {overviews: [], fullThinking: ""}
+
+function recordOverviewChange(responseId, overview) {
+    if (!thinkingOverviewHistory.has(responseId)) {
+        thinkingOverviewHistory.set(responseId, {
+            overviews: [],
+            fullThinking: '',
+            timestamps: []
+        });
+    }
+    
+    const history = thinkingOverviewHistory.get(responseId);
+    
+    // 只记录不同的overview（去重）
+    if (history.overviews.length === 0 || history.overviews[history.overviews.length - 1] !== overview) {
+        history.overviews.push(overview);
+        history.timestamps.push(new Date().toISOString());
+        console.log(`[DEBUG] Overview #${history.overviews.length}: ${overview}`);
+    }
+}
+
 // 🐛 保存Thinking Overview调试数据到后端
-async function saveThinkingOverviewDebug(responseId, fullThinking, extractedOverview) {
-    if (!fullThinking || !extractedOverview) {
+async function saveThinkingOverviewDebug(responseId, fullThinking, finalOverview) {
+    if (!fullThinking || !finalOverview) {
         console.warn('[DEBUG] Missing thinking or overview, skipping save');
         return;
     }
     
     try {
+        // 获取记录的所有overview变化
+        const history = thinkingOverviewHistory.get(responseId) || {
+            overviews: [finalOverview],
+            timestamps: [new Date().toISOString()]
+        };
+        
+        // 更新完整thinking
+        history.fullThinking = fullThinking;
+        
         // 获取当前的用户查询（从最后一条消息获取）
         const lastUserMessage = document.querySelector('.user-message:last-of-type .prose');
         const userQuery = lastUserMessage ? lastUserMessage.textContent.trim() : '';
         
         const debugData = {
             full_thinking: fullThinking,
-            extracted_overview: extractedOverview,
+            extracted_overview: finalOverview,
+            all_overviews: history.overviews,  // 🆕 所有显示过的overview
+            overview_timestamps: history.timestamps,  // 🆕 每次变化的时间戳
             timestamp: new Date().toISOString(),
             user_query: userQuery,
             skill_id: responseId
@@ -708,6 +741,10 @@ async function saveThinkingOverviewDebug(responseId, fullThinking, extractedOver
         
         const result = await response.json();
         console.log(`✅ [DEBUG] Saved thinking overview debug data: Sample #${result.sample_id} (Total: ${result.total_samples})`);
+        console.log(`📊 [DEBUG] Recorded ${history.overviews.length} overview changes`);
+        
+        // 清理历史记录
+        thinkingOverviewHistory.delete(responseId);
         
     } catch (error) {
         console.error('[DEBUG] Failed to save thinking overview debug:', error);
@@ -1194,7 +1231,11 @@ function handleStreamChunk(responseId, data) {
                     
                     if (isThinkingEnding && !overviewText.textContent.includes('准备生成')) {
                         // 🎨 thinking即将结束，显示明显提示
-                        overviewText.innerHTML = '⏳ <span class="animate-pulse">准备生成内容...</span>';
+                        const transitionText = '⏳ 准备生成内容...';
+                        overviewText.innerHTML = `<span class="animate-pulse">${transitionText}</span>`;
+                        // 🐛 记录过渡阶段的overview
+                        recordOverviewChange(responseId, transitionText);
+                        
                         const pulseIcon = thinkingOverview.querySelector('.w-2.h-2');
                         if (pulseIcon) {
                             pulseIcon.classList.remove('bg-blue-500');
@@ -1208,6 +1249,8 @@ function handleStreamChunk(responseId, data) {
                             const motivation = extractThinkingMotivation(fullText);
                             if (motivation && overviewText.textContent !== motivation) {
                                 overviewText.textContent = motivation;
+                                // 🐛 记录overview变化
+                                recordOverviewChange(responseId, motivation);
                             }
                         }
                     }

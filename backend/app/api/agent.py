@@ -880,8 +880,10 @@ async def agent_info(
 class ThinkingOverviewDebugRequest(BaseModel):
     """Thinking Overview调试数据请求"""
     full_thinking: str = Field(..., description="完整的thinking文本")
-    extracted_overview: str = Field(..., description="提取的overview")
-    timestamp: str = Field(..., description="时间戳")
+    extracted_overview: str = Field(..., description="最终提取的overview")
+    all_overviews: list = Field(default=[], description="所有显示过的overview列表")
+    overview_timestamps: list = Field(default=[], description="每次overview变化的时间戳")
+    timestamp: str = Field(..., description="完成时间戳")
     user_query: str = Field(default="", description="用户查询")
     skill_id: str = Field(default="", description="技能ID")
 
@@ -927,6 +929,9 @@ async def save_thinking_overview_debug(request: ThinkingOverviewDebugRequest):
             "skill_id": request.skill_id,
             "full_thinking": request.full_thinking,
             "extracted_overview": request.extracted_overview,
+            "all_overviews": request.all_overviews,  # 🆕 所有显示过的overview
+            "overview_timestamps": request.overview_timestamps,  # 🆕 每次变化的时间戳
+            "overview_changes_count": len(request.all_overviews),  # 🆕 变化次数
             "thinking_length": len(request.full_thinking),
             "overview_length": len(request.extracted_overview)
         }
