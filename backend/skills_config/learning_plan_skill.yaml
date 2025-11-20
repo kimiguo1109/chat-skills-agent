@@ -139,8 +139,7 @@ execution_plan:
       input_mapping:
         subject: "{input.subject}"
         topic: "{input.topic}"
-        # 🔥 传递完整解释内容，确保笔记内容与讲解一致
-        source_content: "{context.explain}"  # 基于讲解生成笔记
+        # 🔥 只传递 reference_explanation（移除重复的 source_content）
         reference_explanation: "{context.explain}"  # 完整的解释结果
       
       context_extraction:
@@ -159,8 +158,9 @@ execution_plan:
       input_mapping:
         subject: "{input.subject}"
         topic: "{input.topic}"
-        # 🔥 传递完整解释内容，确保思维导图基于讲解内容
-        content: "{context.explain.formal_definition}"  # 使用正式定义作为内容
+        max_depth: 3  # 最大深度
+        max_branches: 5  # 每个节点最大分支数
+        # 🔥 只传递 reference_explanation（移除重复的 content）
         reference_explanation: "{context.explain}"  # 完整的解释结果
       
       context_extraction:
