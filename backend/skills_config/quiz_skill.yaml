@@ -66,10 +66,10 @@ models:
   primary: "moonshotai/kimi-k2-thinking"  # 🆕 使用 Kimi thinking 模型
   fallback: "moonshotai/kimi-k2-thinking"
 
-thinking_budget: 64  # ⚡⚡⚡⚡ 极速模式：64 tokens实现5秒响应
-                     # - Quiz 3-5题: 30-60秒 → 5秒 (-91%)
-                     # - 配合严格的prompt约束(2-4句思考上限)
-                     # - max_tokens自动扩展到3564确保输出完整性
+thinking_budget: 96  # ⚡⚡⚡ 平衡模式：考虑上下文整合需求
+                     # - Plan Skill中需要理解reference_explanation + reference_flashcards
+                     # - 独立调用: 快速响应 (5-10秒)
+                     # - 上下文调用: 确保题目覆盖知识点 (10-15秒)
 temperature: 1.0  # ⚡⚡⚡ 极限优化：提高至1.0，最大化生成速度
 
 context:

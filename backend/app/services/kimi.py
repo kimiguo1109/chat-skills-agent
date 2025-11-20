@@ -73,6 +73,8 @@ class KimiClient:
         if thinking_budget:
             if thinking_budget <= 64:
                 content_budget = 3500
+            elif thinking_budget <= 96:
+                content_budget = 3500  # 平衡模式
             elif thinking_budget <= 128:
                 content_budget = 4000
             else:
@@ -82,17 +84,10 @@ class KimiClient:
         else:
             actual_max_tokens = max_tokens
         
-        # ⚡⚡⚡ 添加系统级约束
-        messages = []
-        if thinking_budget and thinking_budget <= 128:
-            system_constraint = (
-                f"CRITICAL: Strict {thinking_budget}-token thinking limit. "
-                f"Be EXTREMELY concise - 2-4 sentences MAX. "
-                f"Skip verbose reasoning. Focus only on core logic."
-            )
-            messages.append({"role": "system", "content": system_constraint})
-        
-        messages.append({"role": "user", "content": prompt})
+        # ⚡⚡⚡ 直接使用 prompt，依赖 max_tokens 控制
+        messages = [
+            {"role": "user", "content": prompt}
+        ]
         
         logger.info(f"🚀 Generating: model={model_to_use}, temp={temperature}, max_tokens={actual_max_tokens}, thinking_budget={thinking_budget}")
         
@@ -181,20 +176,24 @@ class KimiClient:
         # Thinking 模型的输出 = thinking_content + actual_content
         # 
         # 策略：
-        # - thinking_budget 小 (64) → 快速思考，适合简单任务
-        # - content_budget 中等 (3000-4000) → 确保输出质量不受影响
+        # - thinking_budget: 控制推理长度（64-96 tokens）
+        # - content_budget: 确保输出质量（3500-4000 tokens）
+        # - 自然约束 + max_tokens 限制，不使用过度刻意的 system message
         # 
         # 实测数据：
-        # - Explain Skill (简单概念): thinking ~200 tokens, content ~1500 tokens
-        # - Quiz (3题): thinking ~150 tokens, content ~1200 tokens
-        # - Flashcard (5张): thinking ~100 tokens, content ~800 tokens
+        # - Explain Skill: thinking ~150-200 tokens, content ~1500 tokens
+        # - Quiz (3题): thinking ~100-150 tokens, content ~1200 tokens
+        # - Flashcard (5张): thinking ~80-120 tokens, content ~800 tokens
         if thinking_budget:
             # 根据 thinking_budget 智能分配 content budget
             if thinking_budget <= 64:
-                # 极速模式：适合简单任务
-                content_budget = 3500  # 确保输出完整
+                # 极速模式：适合独立的简单任务
+                content_budget = 3500
+            elif thinking_budget <= 96:
+                # 平衡模式：适合需要理解上下文的任务 (Plan Skill sub-skills)
+                content_budget = 3500
             elif thinking_budget <= 128:
-                # 标准模式：适合中等任务
+                # 标准模式：适合中等复杂任务
                 content_budget = 4000
             else:
                 # 深度模式：适合复杂任务
@@ -206,20 +205,11 @@ class KimiClient:
             actual_max_tokens = max_tokens
             logger.info(f"⚡ Using default max_tokens={actual_max_tokens}")
         
-        # ⚡⚡⚡ 添加系统级约束来真正控制 thinking 长度
-        # 这比在 prompt 中"建议"更有效，因为它作为系统指令
-        messages = []
-        
-        if thinking_budget and thinking_budget <= 128:
-            # 对于小 thinking_budget，添加强制的系统约束
-            system_constraint = (
-                f"CRITICAL: Strict {thinking_budget}-token thinking limit. "
-                f"Be EXTREMELY concise - 2-4 sentences MAX. "
-                f"Skip verbose reasoning. Focus only on core logic."
-            )
-            messages.append({"role": "system", "content": system_constraint})
-        
-        messages.append({"role": "user", "content": prompt})
+        # ⚡⚡⚡ 直接使用 prompt，依赖 max_tokens 控制
+        # 不添加过度约束的 system message（会让模型重复规则，浪费 tokens）
+        messages = [
+            {"role": "user", "content": prompt}
+        ]
         
         logger.info(f"🌊 Starting streaming: model={model_to_use}, max_tokens={actual_max_tokens}, thinking_budget={thinking_budget}")
         
