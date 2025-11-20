@@ -595,6 +595,17 @@ class PlanSkillExecutor:
                     else:
                         extracted[field] = value
         
+        elif strategy == "full_content":
+            # 🆕 传递完整内容（确保下游步骤内容连贯性）
+            # 提取所有指定字段的完整内容，不做任何压缩
+            for field in fields:
+                value = self._get_nested_value(result, field)
+                if value:
+                    extracted[field] = value
+            
+            logger.info(f"📦 [full_content策略] 提取了 {len(extracted)} 个字段的完整内容")
+            logger.info(f"📊 提取字段: {list(extracted.keys())}")
+        
         # Token 限制检查
         extracted_str = json.dumps(extracted, ensure_ascii=False)
         estimated_tokens = len(extracted_str) // 4
