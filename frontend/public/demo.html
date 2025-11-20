@@ -953,23 +953,8 @@ function handleStreamChunk(responseId, data) {
                 }
             }
             
-            // 🆕 智能提取thinking summary（降低更新频率，减少跳动）
-            const thinkingSummary = document.getElementById(`plan-step-${currentStep}-thinking-summary`);
-            if (thinkingSummary && stepThinkingContent) {
-                const summaryText = thinkingSummary.querySelector('.thinking-summary-text');
-                if (summaryText) {
-                    const fullText = stepThinkingContent.textContent;
-                    // 🔥 降低更新频率：只在thinking内容达到一定长度或出现句号时才更新
-                    const shouldUpdate = fullText.length % 200 < 10 || /[.。!！?？]/.test(data.text);
-                    if (shouldUpdate) {
-                        const summary = extractThinkingSummary(fullText);
-                        // 只在summary真正改变时才更新（避免相同内容的闪烁）
-                        if (summaryText.textContent !== summary) {
-                            summaryText.textContent = summary;
-                        }
-                    }
-                }
-            }
+            // 🔥 Plan Skill不提取thinking片段，保持"正在XXX..."状态
+            // reasoning_summary会在step_done时显示，避免中英文混杂
         } else {
             // 普通Skill：显示完整thinking内容（流式）
             if (thinkingSection && thinkingSection.classList.contains('hidden')) {

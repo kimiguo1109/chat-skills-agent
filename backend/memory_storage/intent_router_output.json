@@ -1,39 +1,11 @@
 {
   "description": "Intent Router 实时输出记录 (Phase 3 架构)",
-  "latest": {
-    "timestamp": "2025-11-20T12:00:46.687649",
-    "user_message": "什么是光合作用",
-    "method": "rule_engine",
-    "tokens_used": 0,
-    "results": [
-      {
-        "intent": "explain_request",
-        "topic": "光合作用",
-        "confidence": 0.95,
-        "parameters": {}
-      }
-    ]
-  },
-  "history": [
-    {
-      "timestamp": "2025-11-20T12:00:46.687649",
-      "user_message": "什么是光合作用",
-      "method": "rule_engine",
-      "tokens_used": 0,
-      "results": [
-        {
-          "intent": "explain_request",
-          "topic": "光合作用",
-          "confidence": 0.95,
-          "parameters": {}
-        }
-      ]
-    }
-  ],
+  "latest": {},
+  "history": [],
   "stats": {
-    "total_requests": 1,
-    "rule_based_success": 1,
+    "total_requests": 0,
+    "rule_based_success": 0,
     "llm_fallback": 0,
-    "rule_success_rate": "100.0%"
+    "rule_success_rate": "0.0%"
   }
 }
