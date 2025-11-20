@@ -2280,21 +2280,21 @@ function extractThinkingSummary(thinkingText) {
     }
     
     // 最终fallback：智能截取（避免截断在单词中间）
-    const text = thinkingText.trim();
-    if (text.length <= 60) {
-        return text;
+    const finalText = thinkingText.trim();
+    if (finalText.length <= 60) {
+        return finalText;
     }
     
     // 在60字符附近找一个空格或标点，避免截断单词
     let cutoff = 60;
-    for (let i = 60; i < Math.min(70, text.length); i++) {
-        if (/[\s,.;:!?。，；：！？]/.test(text[i])) {
+    for (let i = 60; i < Math.min(70, finalText.length); i++) {
+        if (/[\s,.;:!?。，；：！？]/.test(finalText[i])) {
             cutoff = i;
             break;
         }
     }
     
-    return text.slice(0, cutoff).trim() + '...';
+    return finalText.slice(0, cutoff).trim() + '...';
 }
 
 /**

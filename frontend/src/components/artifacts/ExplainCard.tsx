@@ -2,7 +2,7 @@
  * ExplainCard - 概念讲解卡片（严格按照原始设计）
  */
 
-interface ExplainSection {
+export interface ExplainSection {
   title: string
   content: string
   examples?: Array<{
@@ -12,47 +12,42 @@ interface ExplainSection {
   formula_or_diagram_description?: string | null
 }
 
-interface RelatedConcept {
+export interface RelatedConcept {
   concept_name: string
   brief_explanation: string
 }
 
-interface ExplainCardProps {
-  data: {
-    explanation_artifact?: {
-      concept: string
-      subject: string
-      summary: string
-      sections: ExplainSection[]
-      related_concepts: RelatedConcept[]
-      difficulty_level: string
-    }
-  }
+export interface ExplanationContent {
+  concept: string
+  subject: string
+  summary: string
+  sections: ExplainSection[]
+  related_concepts?: RelatedConcept[]
+  difficulty_level?: string
 }
 
-export function ExplainCard({ data }: ExplainCardProps) {
-  const explanation = data.explanation_artifact
+interface ExplainCardProps {
+  content: ExplanationContent
+}
 
-  if (!explanation) {
-    return (
-      <div className="bg-white border border-gray-200 rounded-lg p-6">
-        <p className="text-gray-500">暂无讲解内容</p>
-      </div>
-    )
-  }
-
+export function ExplainCard({ content }: ExplainCardProps) {
   return (
     <div className="w-full max-w-4xl rounded-xl border border-border-light dark:border-border-dark bg-surface-light dark:bg-surface-dark shadow-sm">
       {/* Title Header */}
       <div className="p-6 sm:p-8">
         <h1 className="text-2xl sm:text-3xl font-bold text-text-light-primary dark:text-text-dark-primary tracking-tight">
-          {explanation.concept}
+          {content.concept}
         </h1>
+        {content.summary && (
+          <p className="text-sm text-slate-500 dark:text-slate-400 mt-2">
+            {content.summary}
+          </p>
+        )}
       </div>
 
       {/* Content Area */}
       <div className="px-6 sm:px-8 pb-6 text-base text-text-light-primary dark:text-text-dark-primary space-y-4">
-        {explanation.sections.map((section, sectionIdx) => (
+        {content.sections.map((section, sectionIdx) => (
           <div key={sectionIdx} className="space-y-4">
             <p dangerouslySetInnerHTML={{ __html: section.content.replace(/<code>/g, '<code class="bg-primary/10 text-primary p-1 rounded-md text-sm">') }} />
             
@@ -70,13 +65,13 @@ export function ExplainCard({ data }: ExplainCardProps) {
       <hr className="border-border-light dark:border-border-dark" />
 
       {/* Examples Section */}
-      {explanation.sections.some(s => s.examples && s.examples.length > 0) && (
+      {content.sections.some(s => s.examples && s.examples.length > 0) && (
         <div className="p-6 sm:p-8">
           <h2 className="text-xl sm:text-2xl font-semibold text-text-light-primary dark:text-text-dark-primary mb-5">
             Examples
           </h2>
           <div className="space-y-6">
-            {explanation.sections.map((section, sectionIdx) =>
+            {content.sections.map((section, sectionIdx) =>
               section.examples?.map((example, exampleIdx) => (
                 <div key={`${sectionIdx}-${exampleIdx}`} className="flex flex-col gap-3">
                   <h3 className="font-semibold text-text-light-primary dark:text-text-dark-primary">
