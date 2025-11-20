@@ -4,6 +4,20 @@
 
 ---
 
+## 🔥 最近更新 (2025-11-20)
+
+### Bug 修复
+- ✅ **Explain Skill 流式渲染卡顿**: 修复在渲染"例子"时停顿10-20s的问题，现在 examples 可以逐个流式显示
+- ✅ **Mindmap 渲染**: 改进错误处理和日志，使用 CDN 加载 Mind Elixir 库
+- ✅ **Plan Skill 步骤编号**: 修复动态步骤选择时显示 "Step 3/2" 的错误
+
+### Phase 4 完整实现
+- ✅ **0-Token 意图识别**: Intent Router token 消耗从 4,500 → 0 (-100%)
+- ✅ **动态步骤选择**: Plan Skill 根据用户需求灵活组合执行步骤
+- ✅ **Notes & Mindmap 集成**: 支持基于 Explain 内容生成笔记和思维导图
+
+---
+
 ## 📋 目录
 
 - [🚀 Phase 4 性能革命：Kimi API迁移](#phase-4-性能革命kimi-api迁移)
