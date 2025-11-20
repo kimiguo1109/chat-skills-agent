@@ -11,7 +11,7 @@
 
 ### Primary Keywords (主要关键词)
 ```
-讲解, 解释, 说明, 什么是, 介绍, 定义, explain, what is, define, introduce
+讲解, 解释, 说明, 理解, 了解, 学习, 什么是, 介绍, 定义, explain, what is, define, introduce, understand, learn
 ```
 
 ### Quantity Patterns (数量模式)
@@ -22,6 +22,9 @@ _N/A - Explanation skill不涉及数量_
 什么是(.+?)           → topic: group(1)
 解释一?下?(.+?)       → topic: group(1)
 讲解一?下?(.+?)       → topic: group(1)
+理解一?下?(.+?)       → topic: group(1)
+了解一?下?(.+?)       → topic: group(1)
+学习一?下?(.+?)       → topic: group(1)
 (.+?)是什么          → topic: group(1)
 关于(.+?)的讲解      → topic: group(1)
 ```
