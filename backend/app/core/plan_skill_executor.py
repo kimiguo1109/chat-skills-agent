@@ -60,7 +60,17 @@ class PlanSkillExecutor:
             聚合后的学习包
         """
         execution_plan = plan_config["execution_plan"]
-        steps = execution_plan["steps"]
+        all_steps = execution_plan["steps"]
+        
+        # 🆕 Phase 4.2: 动态步骤选择 - 如果 user_input 中有 required_steps，只执行这些步骤
+        required_steps = user_input.get("required_steps")
+        if required_steps:
+            logger.info(f"🎯 User requested specific steps: {required_steps}")
+            # 过滤出需要执行的步骤
+            steps = [step for step in all_steps if step.get("step_id") in required_steps]
+            logger.info(f"📋 Filtered execution plan: {len(steps)}/{len(all_steps)} steps")
+        else:
+            steps = all_steps
         
         logger.info(f"\n{'='*60}")
         logger.info(f"🎯 开始执行 Plan Skill: {plan_config['display_name']}")
@@ -73,13 +83,13 @@ class PlanSkillExecutor:
         step_contexts = {}  # 存储每个 step 提取的上下文
         
         # 串联执行所有 steps
-        for step in steps:
+        for actual_index, step in enumerate(steps, 1):  # 🆕 使用实际索引
             step_id = step["step_id"]
             step_name = step["display_name"]
             skill_id = step["skill_id"]
             
             logger.info(f"\n{'─'*60}")
-            logger.info(f"📍 Step {step['order']}: {step_name}")
+            logger.info(f"📍 Step {actual_index}/{len(steps)}: {step_name}")  # 🆕 显示实际进度
             logger.info(f"🔧 Skill: {skill_id}")
             logger.info(f"📦 依赖: {step['depends_on'] or '无'}")
             
@@ -188,7 +198,18 @@ class PlanSkillExecutor:
             Dict: 流式事件 {"type": "plan_progress|thinking|content|step_done|done", ...}
         """
         execution_plan = plan_config["execution_plan"]
-        steps = execution_plan["steps"]
+        all_steps = execution_plan["steps"]
+        
+        # 🆕 Phase 4.2: 动态步骤选择 - 如果 user_input 中有 required_steps，只执行这些步骤
+        required_steps = user_input.get("required_steps")
+        if required_steps:
+            logger.info(f"🎯 User requested specific steps: {required_steps}")
+            # 过滤出需要执行的步骤
+            steps = [step for step in all_steps if step.get("step_id") in required_steps]
+            logger.info(f"📋 Filtered execution plan: {len(steps)}/{len(all_steps)} steps (streaming)")
+        else:
+            steps = all_steps
+        
         total_steps = len(steps)
         
         logger.info(f"\n{'='*60}")
@@ -221,11 +242,11 @@ class PlanSkillExecutor:
         step_contexts = {}
         
         # 串联执行所有 steps（流式）
-        for step in steps:
+        for actual_index, step in enumerate(steps, 1):  # 🆕 使用实际索引而不是原始order
             step_id = step["step_id"]
             step_name = step["display_name"]
             skill_id = step["skill_id"]
-            step_order = step["order"]
+            step_order = actual_index  # 🆕 使用动态索引，而不是原始的step["order"]
             
             logger.info(f"\n{'─'*60}")
             logger.info(f"📍 Step {step_order}/{total_steps}: {step_name}")
@@ -266,7 +287,7 @@ class PlanSkillExecutor:
                         yield chunk
                     elif chunk["type"] == "done":
                         # Step完成，保存结果
-                        result = chunk.get("data", {})
+                        result = chunk.get("content", {})  # ✅ 修复：从 content 字段获取结果
                         step_results[step_id] = result
                         
                         # 3. 提取上下文
@@ -511,15 +532,44 @@ class PlanSkillExecutor:
         Returns:
             Step 输入参数字典
         """
+        logger.debug(f"🔧 Building input for step: {step.get('step_id')}")
+        logger.debug(f"📥 Available user_input keys: {list(user_input.keys())}")
         step_input = {}
         
         for key, value_template in step["input_mapping"].items():
+            logger.debug(f"🔍 Processing: {key} = {value_template}")
             if isinstance(value_template, str) and "{" in value_template:
                 # 解析模板变量
                 if value_template.startswith("{input."):
-                    # 从用户输入提取: {input.topic}
-                    field = value_template[7:-1]
-                    step_input[key] = user_input.get(field)
+                    # 从用户输入提取: {input.topic} 或 {input.quantity|default:5}
+                    field_expr = value_template[7:-1]
+                    
+                    # 🆕 支持默认值过滤器: {input.quantity|default:5}
+                    if "|default:" in field_expr:
+                        field, default_val_str = field_expr.split("|default:", 1)
+                        field = field.strip()
+                        default_val_str = default_val_str.strip()
+                        
+                        value = user_input.get(field)
+                        if value is None:
+                            # 尝试转换类型
+                            if default_val_str.isdigit():
+                                value = int(default_val_str)
+                            elif default_val_str.lower() == "true":
+                                value = True
+                            elif default_val_str.lower() == "false":
+                                value = False
+                            else:
+                                value = default_val_str
+                            logger.debug(f"📝 Using default value for {field}: {value}")
+                        step_input[key] = value
+                    else:
+                        # 无默认值
+                        value = user_input.get(field_expr)
+                        if value is not None:
+                            step_input[key] = value
+                        else:
+                            logger.warning(f"⚠️  Field '{field_expr}' not found in user_input and no default value provided")
                 
                 elif value_template.startswith("{context."):
                     # 从上游 step 上下文提取: {context.explain.key_terms}
@@ -533,7 +583,10 @@ class PlanSkillExecutor:
                         else:
                             step_input[key] = step_contexts[step_id]
                     else:
-                        logger.warning(f"⚠️  依赖的 step {step_id} 不存在或未执行")
+                        # 🆕 Phase 4.2: 当依赖的步骤被动态跳过时，传 None 而不是忽略
+                        # 这样下游 skill 知道这个参数应该存在但被跳过了
+                        logger.warning(f"⚠️  依赖的 step {step_id} 不存在或未执行（可能被动态跳过），传递 None")
+                        step_input[key] = None
             else:
                 # 直接值
                 step_input[key] = value_template

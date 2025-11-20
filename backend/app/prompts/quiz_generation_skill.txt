@@ -49,7 +49,8 @@ You will receive:
 ⚠️ **CRITICAL - Content Consistency (内容连贯性)**:
 - If `reference_explanation` is provided, you MUST base your quiz questions DIRECTLY on this explanation
 - Test the EXACT concepts, definitions, and examples from the reference explanation
-- If `reference_flashcards` is provided, ensure questions cover the key points mentioned in the flashcards
+- If `reference_flashcards` is provided (not None), ensure questions cover the key points mentioned in the flashcards
+- If `reference_flashcards` is None or missing, base questions solely on `reference_explanation`
 - DO NOT create questions about topics NOT covered in the reference materials
 - Questions should comprehensively test understanding of the provided learning materials
 - Ensure quiz difficulty matches the complexity of the reference explanation

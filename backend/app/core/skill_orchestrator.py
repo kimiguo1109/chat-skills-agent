@@ -868,6 +868,15 @@ class SkillOrchestrator:
             if quantity is not None:
                 logger.info(f"📊 Extracted quantity: {quantity} for {skill.id}")
         
+        # 🔥 合并所有 intent parameters (除了已经被处理的)
+        # 这确保 Plan Skill 可以接收 flashcard_quantity, quiz_quantity 等自定义参数
+        # ⚠️  只合并非空值，避免传递 None 或空字符串导致后续处理错误
+        if hasattr(intent_result, 'parameters') and intent_result.parameters:
+            for key, value in intent_result.parameters.items():
+                # 过滤掉 None、空字符串、空列表等无效值
+                if value is not None and value != "" and value != [] and key not in params:
+                    params[key] = value
+        
         # 添加用户提供的额外参数
         if additional_params:
             params.update(additional_params)
@@ -1029,10 +1038,23 @@ class SkillOrchestrator:
             "memory_summary": memory_summary.recent_behavior  # 🔧 使用 generate_memory_summary 结果
         }
         
+        # 🔥 将所有 intent parameters 合并到 user_input，确保 Plan Skill 可以访问所有提取的参数
+        # (例如 flashcard_quantity, quiz_quantity 等)
+        # ⚠️  只合并非空值，避免传递 None 或空字符串导致后续处理错误
+        if intent_result.parameters:
+            for key, value in intent_result.parameters.items():
+                # 过滤掉 None、空字符串、空列表等无效值
+                if value is not None and value != "" and value != [] and key not in user_input:
+                    user_input[key] = value
+                    logger.debug(f"📝 Merged parameter from intent: {key}={value}")
+        
         # 如果 subject 为空，尝试从 topic 中提取
-        if not user_input["subject"] and intent_result.topic:
+        if not user_input.get("subject") and intent_result.topic:
             # 简单提取：假设 topic 可能包含学科信息
             user_input["subject"] = "通用"
+        
+        # 🐛 DEBUG: Log final user_input before executing plan
+        logger.debug(f"📥 Final user_input for Plan Skill: {user_input}")
         
         # 创建 Plan Skill 执行器
         executor = PlanSkillExecutor(skill_orchestrator=self)
@@ -1316,7 +1338,19 @@ class SkillOrchestrator:
         # 简单实现：在 prompt 后附加参数 JSON
         import json
         
-        params_json = json.dumps(params, ensure_ascii=False, indent=2)
+        # 🔥 过滤掉 None 值和不可序列化的对象，避免 JSON 序列化错误
+        clean_params = {}
+        for k, v in params.items():
+            if v is not None:
+                # 检查是否可序列化
+                try:
+                    json.dumps(v)
+                    clean_params[k] = v
+                except (TypeError, ValueError):
+                    # 不可序列化，转换为字符串
+                    clean_params[k] = str(v)
+        
+        params_json = json.dumps(clean_params, ensure_ascii=False, indent=2)
         
         formatted = f"""{prompt_template}
 

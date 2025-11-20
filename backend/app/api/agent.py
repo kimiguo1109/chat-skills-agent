@@ -819,7 +819,9 @@ async def agent_chat_stream(
             # ✅ orchestrator已经发送done事件，不需要重复发送
             
         except Exception as e:
+            import traceback
             logger.error(f"❌ Streaming error: {e}")
+            logger.error(f"📍 Full traceback:\n{traceback.format_exc()}")
             yield f"data: {json.dumps({'type': 'error', 'message': str(e)}, ensure_ascii=False)}\n\n"
     
     return StreamingResponse(

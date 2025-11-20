@@ -1,57 +1,45 @@
 {
   "description": "Intent Router 实时输出记录 (Phase 3 架构)",
   "latest": {
-    "timestamp": "2025-11-20T16:22:45.103409",
-    "user_message": "帮我生成3张闪卡，3道题",
-    "method": "rule_engine",
+    "timestamp": "2025-11-20T18:51:55.532819",
+    "user_message": "什么是光合作用",
+    "method": "skill_registry",
     "tokens_used": 0,
     "results": [
       {
-        "intent": "flashcard_request",
-        "topic": null,
-        "confidence": 0.95,
+        "intent": "explain_request",
+        "topic": "光合作用",
+        "confidence": 1.0,
         "parameters": {
-          "quantity": 3
+          "topic": "光合作用",
+          "concept_name": "光合作用"
         }
       }
     ]
   },
   "history": [
     {
-      "timestamp": "2025-11-20T16:18:35.617286",
+      "timestamp": "2025-11-20T18:51:55.532819",
       "user_message": "什么是光合作用",
-      "method": "rule_engine",
+      "method": "skill_registry",
       "tokens_used": 0,
       "results": [
         {
           "intent": "explain_request",
           "topic": "光合作用",
-          "confidence": 0.95,
-          "parameters": {}
-        }
-      ]
-    },
-    {
-      "timestamp": "2025-11-20T16:22:45.103409",
-      "user_message": "帮我生成3张闪卡，3道题",
-      "method": "rule_engine",
-      "tokens_used": 0,
-      "results": [
-        {
-          "intent": "flashcard_request",
-          "topic": null,
-          "confidence": 0.95,
+          "confidence": 1.0,
           "parameters": {
-            "quantity": 3
+            "topic": "光合作用",
+            "concept_name": "光合作用"
           }
         }
       ]
     }
   ],
   "stats": {
-    "total_requests": 2,
-    "rule_based_success": 2,
+    "total_requests": 1,
+    "rule_based_success": 0,
     "llm_fallback": 0,
-    "rule_success_rate": "100.0%"
+    "rule_success_rate": "0.0%"
   }
 }

@@ -10,8 +10,9 @@
 <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;700&display=swap" rel="stylesheet"/>
 <link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined" rel="stylesheet"/>
     <!-- Mind Elixir for Mind Map Rendering (IIFE version - works without module bundler) -->
-    <link rel="stylesheet" href="/node_modules/mind-elixir/dist/MindElixir.css">
-    <script src="/node_modules/mind-elixir/dist/MindElixir.iife.js"></script>
+    <!-- Mind Elixir - 思维导图库 -->
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/mind-elixir@5.3.6/dist/MindElixir.css">
+    <script src="https://cdn.jsdelivr.net/npm/mind-elixir@5.3.6/dist/MindElixir.iife.js"></script>
     <!-- 🆕 KaTeX for Math Rendering -->
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.css" integrity="sha384-n8MVd4RsNIU0tAv4ct0nTaAbDJwPJzDEaqSD1odI+WdtXRGWt2kTvGFasHpSy3SV" crossorigin="anonymous">
     <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.js" integrity="sha384-XjKyOOlGwcjNTAIQHIpgOno0Hl1YQqzUOEleOLALmuqehneUG+vnGctmUb0ZY0l8" crossorigin="anonymous"></script>
@@ -909,9 +910,9 @@ function extractThinkingMotivation(thinkingText) {
     
     // 接近结束
     if (/ready|complete|good|looks good|完成|准备好|不错/i.test(thinkingText.slice(-500))) {
-        return '即将完成...';
-    }
-    
+    return '即将完成...';
+}
+
     return '正在深度思考...';
 }
 
@@ -1076,7 +1077,7 @@ function renderNotesStreamingUI(partialData) {
                         </h4>
                     </div>
                     <ul class="space-y-3 bullet-list">`;
-            
+    
             if (section.bullet_points && section.bullet_points.length > 0) {
                 section.bullet_points.forEach((point) => {
                     html += `
@@ -1180,11 +1181,11 @@ function renderExplanationStreamingUI(partialData) {
 }
 
 function handleStreamChunk(responseId, data) {
-    // ✅ 流式输出已验证正常工作！过滤thinking/content日志以避免console刷屏
-    // 如需调试，可临时启用: console.log('[Stream]', data.type, ...)
-    if (!['thinking', 'content'].includes(data.type)) {
-        console.log('[Stream]', data.type, data);
-    }
+    // ✅ 流式输出已验证正常工作！所有Stream日志已注释以减少console噪音
+    // 如需调试，可临时启用下面的日志
+    // if (!['thinking', 'content'].includes(data.type)) {
+    //     console.log('[Stream]', data.type, data);
+    // }
     
     const statusEl = document.getElementById(`${responseId}-status`);
     const planPreviewEl = document.getElementById(`${responseId}-plan-preview`);
@@ -1374,19 +1375,20 @@ function handleStreamChunk(responseId, data) {
                 const result = data.result;
                 const contentType = detectContentType(result);
                 
-                console.log(`[DEBUG] detected contentType:`, contentType);
-                console.log(`[DEBUG] result.concept:`, result.concept);
-                console.log(`[DEBUG] result.cards:`, result.cards);
-                console.log(`[DEBUG] result.questions:`, result.questions);
+                // DEBUG 日志已注释
+                // console.log(`[DEBUG] detected contentType:`, contentType);
+                // console.log(`[DEBUG] result.concept:`, result.concept);
+                // console.log(`[DEBUG] result.cards:`, result.cards);
+                // console.log(`[DEBUG] result.questions:`, result.questions);
                 
                 if (contentType === 'explanation' && result.concept) {
-                    console.log(`[DEBUG] Rendering explanation card`);
+                    // console.log(`[DEBUG] Rendering explanation card`);
                     stepOutputContent.innerHTML = renderExplainCard(result);
                 } else if (contentType === 'flashcard_set' && result.cards) {
-                    console.log(`[DEBUG] Rendering flashcard set`);
+                    // console.log(`[DEBUG] Rendering flashcard set`);
                     stepOutputContent.innerHTML = renderFlashcardSet(result);
                 } else if (contentType === 'quiz_set' && result.questions) {
-                    console.log(`[DEBUG] Rendering quiz card`);
+                    // console.log(`[DEBUG] Rendering quiz card`);
                     stepOutputContent.innerHTML = renderQuizCard(result);
                 } else if (contentType === 'mindmap' && result.root) {
                     stepOutputContent.innerHTML = renderMindMapCard(result);
@@ -1394,7 +1396,7 @@ function handleStreamChunk(responseId, data) {
                     stepOutputContent.innerHTML = renderNotesCard(result);
                 } else {
                     // 未知类型，显示简单的JSON摘要
-                    console.log(`[DEBUG] Unknown type, showing raw JSON`);
+                    // console.log(`[DEBUG] Unknown type, showing raw JSON`);
                     stepOutputContent.innerHTML = `
                         <div class="text-sm text-text-light-secondary dark:text-text-dark-secondary">
                             <p class="font-semibold mb-2">步骤结果：</p>
@@ -1677,11 +1679,53 @@ function handleStreamChunk(responseId, data) {
                         stepOutputContent.innerHTML = renderFlashcardStreamingUI(partialData);
                     } else if (partialData.concept) {
                         stepOutputContent.innerHTML = renderExplanationStreamingUI(partialData);
+                    } else if (partialData.structured_notes) {
+                        stepOutputContent.innerHTML = renderNotesStreamingUI(partialData);
                     }
                 } catch (e) {
-                    // JSON不完整，显示加载状态
+                    // 🔥 JSON不完整，使用正则智能提取
+                    const acc = data.accumulated || '';
+                    
+                    const extract = (key) => {
+                        const regex = new RegExp(`"${key}"\\s*:\\s*"((?:[^"\\\\]|\\\\.)*)`);
+                        const match = acc.match(regex);
+                        return match ? match[1] : null;
+                    };
+
+                    const partialData = {
+                        concept: extract('concept'),
+                        intuition: extract('intuition'),
+                        formal_definition: extract('formal_definition'),
+                        questions: [],
+                        cards: [],
+                        structured_notes: {
+                            title: extract('title'),
+                            sections: []
+                        }
+                    };
+                    
+                    // 提取数组项
+                    const questionMatches = acc.matchAll(/"question_text"\s*:\s*"((?:[^"\\\\]|\\\\.)*)/g);
+                    for (const m of questionMatches) partialData.questions.push({ question_text: m[1] });
+                    
+                    const cardMatches = acc.matchAll(/"front"\s*:\s*"((?:[^"\\\\]|\\\\.)*)/g);
+                    for (const m of cardMatches) partialData.cards.push({ front: m[1] });
+
+                    const sectionMatches = acc.matchAll(/"heading"\s*:\s*"((?:[^"\\\\]|\\\\.)*)/g);
+                    for (const m of sectionMatches) partialData.structured_notes.sections.push({ heading: m[1], points: [] });
+
+                    if (partialData.questions.length > 0) {
+                        stepOutputContent.innerHTML = renderQuizStreamingUI(partialData);
+                    } else if (partialData.cards.length > 0) {
+                        stepOutputContent.innerHTML = renderFlashcardStreamingUI(partialData);
+                    } else if (partialData.concept || partialData.intuition) {
+                        stepOutputContent.innerHTML = renderExplanationStreamingUI(partialData);
+                    } else if (partialData.structured_notes.title || partialData.structured_notes.sections.length > 0) {
+                        stepOutputContent.innerHTML = renderNotesStreamingUI(partialData);
+                    } else {
                     if (!stepOutputContent.innerHTML) {
                         stepOutputContent.innerHTML = '<div class="text-center py-4"><div class="animate-pulse text-blue-500">📝 正在生成内容...</div></div>';
+                        }
                     }
                 }
             } else {
@@ -1744,7 +1788,12 @@ function handleStreamChunk(responseId, data) {
                         formal_definition: extract('formal_definition'),
                         // 尝试提取数组项 (简化版)
                         questions: [],
-                        cards: []
+                        cards: [],
+                        // Notes 提取
+                        structured_notes: {
+                            title: extract('title'),
+                            sections: []
+                        }
                     };
                     
                     // 提取所有 quiz questions
@@ -1759,6 +1808,15 @@ function handleStreamChunk(responseId, data) {
                         partialData.cards.push({ front: m[1] });
                     }
 
+                    // 提取 notes sections
+                    const sectionMatches = acc.matchAll(/"heading"\s*:\s*"((?:[^"\\\\]|\\\\.)*)/g);
+                    for (const m of sectionMatches) {
+                        partialData.structured_notes.sections.push({ heading: m[1], points: [] });
+                    }
+                    
+                    // 提取 points (这里简化处理，因为points是嵌套的，正则提取比较困难，只能提取最近的)
+                    // 实际上对于notes，只要有title和section heading，流式体验就已经很好了
+
                     // 如果提取到了任何内容，就尝试渲染
                     if (partialData.questions.length > 0) {
                         finalEl.innerHTML = renderQuizStreamingUI(partialData);
@@ -1766,9 +1824,11 @@ function handleStreamChunk(responseId, data) {
                         finalEl.innerHTML = renderFlashcardStreamingUI(partialData);
                     } else if (partialData.concept || partialData.intuition) {
                         finalEl.innerHTML = renderExplanationStreamingUI(partialData);
+                    } else if (partialData.structured_notes.title || partialData.structured_notes.sections.length > 0) {
+                        finalEl.innerHTML = renderNotesStreamingUI(partialData);
                     } else {
                         // 真的什么都没提取到，显示loading
-                        if (!finalEl.innerHTML) {
+                    if (!finalEl.innerHTML) {
                             finalEl.innerHTML = '<div class="text-center py-4"><div class="animate-pulse text-blue-500">📝 正在生成内容... (' + acc.length + ' 字符)</div></div>';
                         }
                     }
@@ -1796,10 +1856,10 @@ function handleStreamChunk(responseId, data) {
         // 生成完成，渲染最终结果
         if (statusEl) statusEl.remove();
         
-        // 🔍 Debug: 打印完整的done事件数据
-        console.log('[DEBUG] Done event data:', JSON.stringify(data, null, 2));
-        console.log('[DEBUG] data.content:', data.content);
-        console.log('[DEBUG] data.content.reasoning_summary:', data.content?.reasoning_summary);
+        // 🔍 Debug日志已注释以减少console噪音
+        // console.log('[DEBUG] Done event data:', JSON.stringify(data, null, 2));
+        // console.log('[DEBUG] data.content:', data.content);
+        // console.log('[DEBUG] data.content.reasoning_summary:', data.content?.reasoning_summary);
         
         // 🆕 Done后隐藏thinking overview（用户只想在thinking过程中看到）
         const thinkingOverview = document.getElementById(`${responseId}-thinking-overview`);
@@ -1814,9 +1874,9 @@ function handleStreamChunk(responseId, data) {
         }
         
         if (!data.content || !data.content.reasoning_summary) {
-            // ⚠️ Fallback：如果没有reasoning_summary，记录日志
-            console.warn('[WARN] No reasoning_summary in done event');
-            console.log('[DEBUG] Available keys in data.content:', data.content ? Object.keys(data.content) : 'null');
+            // ⚠️ Fallback：如果没有reasoning_summary，记录日志（已注释）
+            // console.warn('[WARN] No reasoning_summary in done event');
+            // console.log('[DEBUG] Available keys in data.content:', data.content ? Object.keys(data.content) : 'null');
         }
         
         // 检测是否是Plan Skill
@@ -1871,7 +1931,7 @@ function handleStreamChunk(responseId, data) {
         }
         
         scrollToBottom();
-        console.log('✅ Stream finished');
+        // console.log('✅ Stream finished');
     } 
     else if (data.type === 'error') {
         updateStreamError(responseId, data.message);
@@ -2751,15 +2811,15 @@ function addAgentMessage(data) {
     let contentHtml = '';
     
     if (data.content_type === 'mixed_response' && data.response_content.results) {
-        // 混合请求：渲染多个结果
-        console.log('🎭 Mixed response results:', data.response_content.results);
-        data.response_content.results.forEach((result, idx) => {
-            console.log(`📦 Result ${idx + 1}:`, {
-                content_type: result.content_type,
-                has_structured_notes: !!result.content?.structured_notes,
-                content_keys: Object.keys(result.content || {})
-            });
-        });
+        // 混合请求：渲染多个结果（DEBUG日志已注释）
+        // console.log('🎭 Mixed response results:', data.response_content.results);
+        // data.response_content.results.forEach((result, idx) => {
+        //     console.log(`📦 Result ${idx + 1}:`, {
+        //         content_type: result.content_type,
+        //         has_structured_notes: !!result.content?.structured_notes,
+        //         content_keys: Object.keys(result.content || {})
+        //     });
+        // });
         
         contentHtml = '<div class="flex flex-col gap-6 w-full">';
         data.response_content.results.forEach((result, idx) => {
@@ -2788,9 +2848,9 @@ function addAgentMessage(data) {
     } else if (data.content_type === 'quiz_set' && data.response_content.questions) {
         contentHtml = renderQuizCard(data.response_content);
     } else if (data.content_type === 'explanation' && data.response_content.concept) {
-        // Debug: 打印 examples 数组查看结构
-        console.log('Explanation content:', data.response_content);
-        console.log('Examples:', data.response_content.examples);
+        // Debug 日志已注释
+        // console.log('Explanation content:', data.response_content);
+        // console.log('Examples:', data.response_content.examples);
         contentHtml = renderExplainCard(data.response_content);
     } else if (data.content_type === 'flashcard_set' && data.response_content.cards) {
         contentHtml = renderFlashcardSet(data.response_content);
@@ -2800,8 +2860,8 @@ function addAgentMessage(data) {
         // 思维导图渲染
         contentHtml = renderMindMapCard(data.response_content);
     } else if (data.content_type === 'notes') {
-        // 学习笔记渲染
-        console.log('📝 渲染笔记, response_content:', data.response_content);
+        // 学习笔记渲染（DEBUG日志已注释）
+        // console.log('📝 渲染笔记, response_content:', data.response_content);
         if (data.response_content.structured_notes) {
             contentHtml = renderNotesCard(data.response_content);
         } else {

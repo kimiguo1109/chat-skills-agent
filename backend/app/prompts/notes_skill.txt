@@ -13,6 +13,16 @@ SUBJECT: {subject}
 SOURCE CONTENT (if provided):
 {source_content}
 
+REFERENCE EXPLANATION (if provided, for Plan Skill context):
+{reference_explanation}
+
+⚠️ **CRITICAL - Content Consistency (内容连贯性)**:
+- If `reference_explanation` is provided, you MUST base your notes DIRECTLY on this explanation
+- Extract and organize key points from the reference explanation
+- Ensure note content is 100% consistent with the explanation
+- DO NOT create notes about concepts NOT mentioned in the reference explanation
+- The notes should help students review and organize the EXACT content from the explanation
+
 INSTRUCTIONS:
 1. Create clear, well-structured学习笔记 (study notes)
 2. Organize content into logical sections with headings

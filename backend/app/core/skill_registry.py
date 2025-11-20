@@ -2,17 +2,30 @@
 Skill Registry - 技能注册表
 
 负责加载、管理和查询所有可用的 Skills。
-从 YAML 配置文件中加载 Skill 定义。
+从 YAML 配置文件和 skill.md 元数据中加载 Skill 定义。
+
+Phase 4: 实现 0-token 意图匹配功能
 """
 import logging
 import os
-from typing import Dict, List, Optional
+import re
+from typing import Dict, List, Optional, Tuple, Any
+from dataclasses import dataclass
 import yaml
 
 from ..models.skill import SkillDefinition
 from ..config import settings
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass
+class SkillMatch:
+    """技能匹配结果"""
+    skill_id: str
+    confidence: float
+    parameters: Dict[str, Any]
+    matched_keywords: List[str]
 
 
 class SkillRegistry:
@@ -29,15 +42,24 @@ class SkillRegistry:
             # 默认配置目录在项目根目录的 skills_config/
             base_dir = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))
             config_dir = os.path.join(base_dir, "skills_config")
+            self.skills_metadata_dir = os.path.join(base_dir, "skills")
+        else:
+            self.skills_metadata_dir = os.path.join(os.path.dirname(config_dir), "skills")
         
         self.config_dir = config_dir
         self._skills: Dict[str, SkillDefinition] = {}
         self._intent_map: Dict[str, List[str]] = {}  # intent -> [skill_ids]
         
+        # 🆕 Phase 4: 加载 skill.md 元数据
+        self._skill_metadata: Dict[str, Dict[str, Any]] = {}  # skill_id -> metadata
+        
         # 加载所有 skills
         self._load_skills()
         
-        logger.info(f"✅ SkillRegistry initialized with {len(self._skills)} skills")
+        # 🆕 加载 skill.md 元数据（用于 0-token 匹配）
+        self._load_skill_metadata()
+        
+        logger.info(f"✅ SkillRegistry initialized with {len(self._skills)} skills ({len(self._skill_metadata)} with metadata)")
     
     def _load_skills(self):
         """从配置目录加载所有 Skill 定义"""
@@ -155,13 +177,402 @@ class SkillRegistry:
         """
         return [skill for skill in self._skills.values() if skill.composable]
     
+    # ==================== Phase 4: 0-Token Matching ====================
+    
+    def _load_skill_metadata(self):
+        """
+        加载所有 skill.md 元数据文件
+        用于 0-token 意图匹配
+        """
+        if not os.path.exists(self.skills_metadata_dir):
+            logger.warning(f"Skills metadata directory not found: {self.skills_metadata_dir}")
+            return
+        
+        for skill_dir in os.listdir(self.skills_metadata_dir):
+            skill_path = os.path.join(self.skills_metadata_dir, skill_dir)
+            if not os.path.isdir(skill_path):
+                continue
+            
+            skill_md_path = os.path.join(skill_path, "skill.md")
+            if not os.path.exists(skill_md_path):
+                logger.debug(f"No skill.md found for {skill_dir}")
+                continue
+            
+            try:
+                metadata = self._parse_skill_md(skill_md_path)
+                skill_id = metadata.get("id", skill_dir)
+                self._skill_metadata[skill_id] = metadata
+                logger.info(f"✅ Loaded metadata for: {skill_id}")
+            except Exception as e:
+                logger.error(f"❌ Failed to load metadata from {skill_md_path}: {e}")
+    
+    def _parse_skill_md(self, filepath: str) -> Dict[str, Any]:
+        """
+        解析 skill.md 文件，提取意图触发规则
+        
+        Returns:
+            metadata dict with:
+                - id: skill_id
+                - primary_keywords: List[str]
+                - quantity_patterns: List[str]
+                - topic_patterns: List[str]
+                - context_patterns: List[str]
+        """
+        with open(filepath, 'r', encoding='utf-8') as f:
+            content = f.read()
+        
+        metadata = {}
+        
+        # 提取 Skill ID
+        id_match = re.search(r'\*\*技能ID\*\*:\s*`(.+?)`', content)
+        if id_match:
+            metadata['id'] = id_match.group(1)
+        
+        # 提取 Primary Keywords
+        keywords_section = re.search(
+            r'### Primary Keywords.*?```\n(.*?)\n```',
+            content,
+            re.DOTALL
+        )
+        if keywords_section:
+            keywords_text = keywords_section.group(1).strip()
+            # 分割并清理关键词（支持逗号分隔）
+            keywords = [kw.strip() for kw in re.split(r'[,，\s]+', keywords_text) if kw.strip()]
+            metadata['primary_keywords'] = keywords
+        else:
+            metadata['primary_keywords'] = []
+        
+        # 提取 Quantity Patterns
+        quantity_section = re.search(
+            r'### Quantity Patterns.*?```(?:regex)?\n(.*?)\n```',
+            content,
+            re.DOTALL
+        )
+        if quantity_section:
+            patterns_text = quantity_section.group(1).strip()
+            patterns = [p.strip() for p in patterns_text.split('\n') if p.strip() and not p.strip().startswith('_N/A')]
+            metadata['quantity_patterns'] = patterns
+        else:
+            metadata['quantity_patterns'] = []
+        
+        # 提取 Topic Patterns
+        topic_section = re.search(
+            r'### Topic Patterns.*?```(?:regex)?\n(.*?)\n```',
+            content,
+            re.DOTALL
+        )
+        if topic_section:
+            patterns_text = topic_section.group(1).strip()
+            patterns = [p.strip() for p in patterns_text.split('\n') if p.strip()]
+            metadata['topic_patterns'] = patterns
+        else:
+            metadata['topic_patterns'] = []
+        
+        # 提取 Context Patterns
+        context_section = re.search(
+            r'### Context Patterns.*?```\n(.*?)\n```',
+            content,
+            re.DOTALL
+        )
+        if context_section:
+            patterns_text = context_section.group(1).strip()
+            patterns = [p.strip() for p in patterns_text.split('\n') if p.strip()]
+            metadata['context_patterns'] = patterns
+        else:
+            metadata['context_patterns'] = []
+        
+        return metadata
+    
+    def match_message(self, message: str) -> Optional[SkillMatch]:
+        """
+        匹配用户消息到技能（0 tokens）
+        
+        核心方法：实现 Phase 4 的 0-token 意图识别
+        
+        Args:
+            message: 用户消息
+        
+        Returns:
+            SkillMatch 或 None（未匹配）
+        """
+        if not self._skill_metadata:
+            logger.warning("⚠️ No skill metadata loaded, falling back to LLM")
+            return None
+        
+        # 🆕 Phase 4.1: 先检测混合意图
+        mixed_match = self._detect_mixed_intent(message)
+        if mixed_match:
+            logger.info(f"🔀 Detected mixed intent, matched to: {mixed_match.skill_id}")
+            return mixed_match
+        
+        best_match: Optional[SkillMatch] = None
+        best_confidence = 0.0
+        
+        # 遍历所有技能，计算匹配度
+        for skill_id, metadata in self._skill_metadata.items():
+            # 检查主要关键词
+            matched_keywords = self._check_keywords(message, metadata.get('primary_keywords', []))
+            if not matched_keywords:
+                continue  # 没有匹配关键词，跳过
+            
+            # 提取参数
+            parameters = self._extract_parameters(message, metadata, skill_id)
+            
+            # 计算置信度
+            confidence = self._calculate_confidence(
+                message,
+                metadata,
+                matched_keywords,
+                parameters
+            )
+            
+            # 更新最佳匹配
+            if confidence > best_confidence:
+                best_confidence = confidence
+                best_match = SkillMatch(
+                    skill_id=skill_id,
+                    confidence=confidence,
+                    parameters=parameters,
+                    matched_keywords=matched_keywords
+                )
+        
+        # 只返回置信度 >= 0.7 的匹配
+        if best_match and best_match.confidence >= 0.7:
+            logger.info(f"✅ Matched skill: {best_match.skill_id} (confidence: {best_match.confidence:.2f})")
+            return best_match
+        
+        logger.debug(f"⚠️ No confident match found (best: {best_confidence:.2f})")
+        return None
+    
+    def _check_keywords(self, message: str, keywords: List[str]) -> List[str]:
+        """检查消息中是否包含关键词"""
+        message_lower = message.lower()
+        matched = []
+        for keyword in keywords:
+            if keyword.lower() in message_lower:
+                matched.append(keyword)
+        return matched
+    
+    def _extract_parameters(
+        self,
+        message: str,
+        metadata: Dict[str, Any],
+        skill_id: str
+    ) -> Dict[str, Any]:
+        """
+        从消息中提取参数
+        
+        Returns:
+            parameters dict (topic, quantity, use_last_artifact, etc.)
+        """
+        params = {}
+        
+        # 1. 提取数量参数 - 使用简单直接的正则匹配
+        # 通用数量模式
+        quantity_match = re.search(r'(\d+)\s*[道个张份]', message)
+        if quantity_match:
+            quantity_value = int(quantity_match.group(1))
+            
+            # 根据 skill_id 设置正确的参数名
+            if skill_id == 'quiz_skill':
+                params['num_questions'] = quantity_value
+            elif skill_id == 'flashcard_skill':
+                params['num_cards'] = quantity_value
+            elif skill_id == 'learning_plan_skill':
+                # 学习包可能包含多个数量参数
+                if '闪卡' in message or '卡片' in message:
+                    params['flashcard_quantity'] = quantity_value
+                elif '题' in message:
+                    params['quiz_quantity'] = quantity_value
+            
+            logger.debug(f"📊 Extracted quantity: {quantity_value}")
+        
+        # 2. 提取主题
+        topic = self._extract_topic(message, metadata)
+        if topic:
+            params['topic'] = topic
+            # 对于 explain_skill，topic 应该设置为 concept_name
+            if skill_id == 'explain_skill':
+                params['concept_name'] = topic
+        
+        # 3. 检测上下文引用 - 使用简单的关键词检测
+        context_keywords = ['根据', '基于', '刚才', '这些', '这道', '上面', '第一', '第二', '第三', '第']
+        if any(kw in message for kw in context_keywords):
+            params['use_last_artifact'] = True
+            logger.debug(f"🔗 Detected context reference")
+        
+        return params
+    
+    def _extract_topic(self, message: str, metadata: Dict[str, Any]) -> Optional[str]:
+        """从消息中提取主题 - 使用简单直接的方法"""
+        
+        # 简化的主题提取模式
+        topic_patterns = [
+            r'(\d+)[道个张份](.+?)[的]?[题笔闪导卡图记]',  # "5道二战历史的题"
+            r'关于(.+?)[的]?[题笔闪导卡图记]',          # "关于光合作用的题"
+            r'什么是(.+)',                             # "什么是光合作用"
+            r'解释(?:一?下?)?(.+)',                    # "解释光合作用"
+            r'讲解(?:一?下?)?(.+)',                    # "讲解光合作用"
+            r'(.+?)[的]?[题笔闪导卡图记]',             # "二战历史的题"
+        ]
+        
+        for pattern in topic_patterns:
+            match = re.search(pattern, message)
+            if match:
+                # 提取最后一个捕获组（通常是主题）
+                topic = match.group(len(match.groups())).strip()
+                # 清理主题
+                topic = self._clean_topic(topic)
+                if len(topic) >= 2:
+                    logger.debug(f"📝 Extracted topic: {topic}")
+                    return topic
+        
+        return None
+    
+    def _clean_topic(self, topic: str) -> str:
+        """清理主题文本，移除填充词"""
+        # 移除常见填充词
+        filler_words = [
+            "的", "了", "吗", "呢", "啊", "吧",
+            "给我", "帮我", "我要", "生成", "创建",
+            "出", "做", "写",
+            "关于", "有关",
+            " 思维", " 导图", " 笔记", " 题目", " 闪卡", " 卡片"  # 技能相关的词
+        ]
+        for filler in filler_words:
+            topic = topic.replace(filler, " ")
+        
+        # 移除数量词
+        topic = re.sub(r'\d+\s*[个道张份]', '', topic)
+        
+        return topic.strip()
+    
+    def _calculate_confidence(
+        self,
+        message: str,
+        metadata: Dict[str, Any],
+        matched_keywords: List[str],
+        parameters: Dict[str, Any]
+    ) -> float:
+        """
+        计算匹配置信度
+        
+        Returns:
+            confidence score (0.0 - 1.0)
+        """
+        confidence = 0.5  # 基础分
+        
+        # 1. 关键词匹配（+0.3）
+        if matched_keywords:
+            confidence += 0.3
+        
+        # 2. 有明确主题（+0.15）
+        if parameters.get('topic') or parameters.get('concept_name'):
+            confidence += 0.15
+        
+        # 3. 有数量参数（+0.05）
+        if any(k in parameters for k in ['num_questions', 'num_cards', 'flashcard_quantity', 'quiz_quantity']):
+            confidence += 0.05
+        
+        # 4. 简短明确的请求（+0.1）
+        if len(message) < 20 and matched_keywords:
+            confidence += 0.05
+        
+        return min(confidence, 1.0)  # 最大 1.0
+    
+    def _detect_mixed_intent(self, message: str) -> Optional[SkillMatch]:
+        """
+        检测混合意图（多个技能关键词）
+        
+        如果检测到多个技能的关键词，返回 learning_plan_skill
+        
+        Args:
+            message: 用户消息
+        
+        Returns:
+            SkillMatch for learning_plan_skill or None
+        """
+        # 定义各技能的关键词集合
+        skill_keywords = {
+            'explain': ['解释', '讲解', '说明', '什么是', 'explain', 'what is'],
+            'quiz': ['题', '题目', '练习', '测试', 'quiz', 'test', 'question'],
+            'flashcard': ['闪卡', '卡片', '记忆卡', 'flashcard', 'card'],
+            'notes': ['笔记', '总结', '归纳', 'notes', 'summary'],
+            'mindmap': ['思维导图', '导图', '知识图', 'mindmap', 'mind map', 'concept map']
+        }
+        
+        # 检测消息中包含哪些技能的关键词
+        matched_skills = []
+        for skill_name, keywords in skill_keywords.items():
+            if any(kw in message for kw in keywords):
+                matched_skills.append(skill_name)
+        
+        # 如果检测到 2 个或以上的技能关键词，判定为混合意图
+        if len(matched_skills) >= 2:
+            logger.info(f"🔀 Mixed intent detected: {matched_skills}")
+            
+            # 提取参数
+            params = {}
+            
+            # 🆕 Phase 4.2: 添加 required_steps，让 Plan Skill 知道要执行哪些步骤
+            step_mapping = {
+                'explain': 'explain',
+                'quiz': 'quiz',
+                'flashcard': 'flashcard',
+                'notes': 'notes',
+                'mindmap': 'mindmap'
+            }
+            params['required_steps'] = [step_mapping[skill] for skill in matched_skills if skill in step_mapping]
+            logger.info(f"📋 Required steps: {params['required_steps']}")
+            
+            # 提取主题 - 使用更智能的方法
+            # 尝试从常见模式中提取主题
+            topic = None
+            topic_patterns = [
+                r'解释(?:一?下?)?(.+?)(?:，|并|然后|再)',       # "解释牛顿第二定律，并..."
+                r'讲解(?:一?下?)?(.+?)(?:，|并|然后|再)',       # "讲解牛顿第二定律，并..."
+                r'关于(.+?)(?:的|，)',                         # "关于牛顿第二定律的..."
+                r'(.+?)(?:的|，)(?:讲解|解释|题目|闪卡)',      # "牛顿第二定律的讲解..."
+            ]
+            
+            for pattern in topic_patterns:
+                match = re.search(pattern, message)
+                if match:
+                    topic = match.group(1).strip()
+                    topic = self._clean_topic(topic)
+                    if len(topic) >= 2:
+                        params['topic'] = topic
+                        break
+            
+            # 提取数量参数
+            quantity_match = re.search(r'(\d+)\s*[道个张份]', message)
+            if quantity_match:
+                quantity_value = int(quantity_match.group(1))
+                # 根据消息中的关键词判断数量属于哪个技能
+                if 'quiz' in matched_skills:
+                    params['quiz_quantity'] = quantity_value
+                if 'flashcard' in matched_skills:
+                    params['flashcard_quantity'] = quantity_value
+            
+            # 返回 learning_plan_skill 匹配
+            return SkillMatch(
+                skill_id='learning_plan_skill',
+                confidence=0.90,  # 高置信度
+                parameters=params,
+                matched_keywords=matched_skills
+            )
+        
+        return None
+    
     def reload(self):
         """重新加载所有 Skills（用于热更新）"""
         logger.info("🔄 Reloading skills...")
         self._skills.clear()
         self._intent_map.clear()
+        self._skill_metadata.clear()
         self._load_skills()
-        logger.info(f"✅ Reloaded {len(self._skills)} skills")
+        self._load_skill_metadata()
+        logger.info(f"✅ Reloaded {len(self._skills)} skills ({len(self._skill_metadata)} with metadata)")
 
 
 # 全局单例

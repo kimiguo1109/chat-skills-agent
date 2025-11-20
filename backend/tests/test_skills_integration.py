@@ -144,18 +144,16 @@ class TestPromptSystem:
         """验证所有必需的 Prompt 文件都存在"""
         prompts_dir = "app/prompts"
         
+        # Phase 4: 清理后只保留实际使用的 prompt 文件
         required_prompts = [
             "intent_router.txt",
             "memory_summary.txt",
             "quiz_generation_skill.txt",
             "concept_explain_skill.txt",
-            "homework_help_skill.txt",
-            "notes_generation_skill.txt",
-            "flashcards_skill.txt",
-            "tutor_dialogue_skill.txt",
-            "learning_bundle_skill.txt",
-            "output_validator.txt",
-            "safety_policy.txt"
+            "flashcard_skill.txt",
+            "notes_skill.txt",
+            "mindmap_skill.txt",
+            "learning_bundle_skill.txt"
         ]
         
         for prompt_file in required_prompts:

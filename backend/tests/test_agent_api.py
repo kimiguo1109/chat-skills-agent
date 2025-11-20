@@ -36,7 +36,7 @@ class TestAgentInfoEndpoint:
         assert response.status_code == 200
         data = response.json()
         assert "total_skills" in data
-        assert data["total_skills"] == 2
+        assert data["total_skills"] == 7  # Phase 4: 包含所有 skill.md 技能
         assert "available_intents" in data
         assert "quiz" in data["available_intents"]
         assert "explain" in data["available_intents"]

@@ -37,6 +37,9 @@ input_schema:
       default: 4
       minimum: 2
       maximum: 6
+    reference_explanation:
+      type: object
+      description: "参考讲解内容（用于Plan Skill上下文传递）"
     memory_summary:
       type: string
       description: "用户学习画像摘要"

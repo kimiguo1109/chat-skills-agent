@@ -103,6 +103,11 @@ class RuleBasedIntentClassifier:
         """
         message_lower = message.lower().strip()
         
+        # 0. 混合意图检测（如果检测到多个意图关键词，交由 LLM 处理）
+        if self._detect_mixed_intent(message_lower):
+            logger.info("🔀 Mixed intent detected, fallback to LLM for complex handling")
+            return None
+
         # 1. 尝试关键词匹配
         matched_intent = self._match_keywords(message_lower)
         
@@ -257,6 +262,60 @@ class RuleBasedIntentClassifier:
                     continue
         
         return None
+    
+    def _detect_mixed_intent(self, message: str) -> bool:
+        """
+        检测是否包含混合意图（如 "3张闪卡和2道题"）
+        
+        Args:
+            message: 用户消息（小写）
+            
+        Returns:
+            是否为混合意图
+        """
+        # 检查各意图关键词的命中情况
+        hits = []
+        
+        # Flashcard
+        if any(kw in message for kw in self.intent_keywords["flashcard"]["keywords"]):
+            hits.append("flashcard")
+            
+        # Quiz
+        if any(kw in message for kw in self.intent_keywords["quiz"]["keywords"]):
+            hits.append("quiz")
+            
+        # Notes
+        if any(kw in message for kw in self.intent_keywords["notes"]["keywords"]):
+            hits.append("notes")
+            
+        # Mindmap
+        if any(kw in message for kw in self.intent_keywords["mindmap"]["keywords"]):
+            hits.append("mindmap")
+            
+        # 如果命中2个及以上不同类型的意图，认为是混合意图
+        # 特殊处理：explain 经常和其他词混用（如 "解释一下这道题"），通常不算混合意图
+        if len(hits) >= 2:
+            logger.info(f"🔀 Mixed intent keywords detected: {hits}")
+            return True
+            
+        # 🆕 特殊检查：Explain + Quiz (常见组合，如 "解释X并出题")
+        # "explain" 关键词 (explain/讲解/解释) + "quiz" 关键词 (题/练习) + 连接词/动作
+        has_explain = any(kw in message for kw in self.intent_keywords["explain"]["keywords"])
+        has_quiz = any(kw in message for kw in self.intent_keywords["quiz"]["keywords"])
+        
+        if has_explain and has_quiz:
+            # 简单的 "解释这道题" 不算混合，只有包含连接词或明确的第二个动作才算
+            connectors = ["并", "然后", "接着", "再", "同时", "and", "then", "plus", "加"]
+            actions = ["生成", "出", "做", "给", "来", "整"]
+            
+            has_connector = any(c in message for c in connectors)
+            has_action = any(a in message for a in actions)
+            
+            if has_connector or has_action:
+                logger.info(f"🔀 Mixed intent (Explain + Quiz) detected")
+                return True
+                
+        return False
     
     def _detect_context_reference(self, message: str) -> bool:
         """

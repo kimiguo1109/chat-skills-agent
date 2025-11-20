@@ -18,6 +18,7 @@ from ..services.gemini import GeminiClient
 from ..models.intent import IntentResult, MemorySummary
 from ..config import settings
 from .rule_based_classifier import RuleBasedIntentClassifier
+from .skill_registry import SkillRegistry, get_skill_registry
 
 logger = logging.getLogger(__name__)
 
@@ -52,13 +53,16 @@ class IntentRouter:
         self.use_rule_engine = use_rule_engine
         self.save_output = save_output
         
+        # 🆕 Phase 4: 初始化 Skill Registry (0-token matching)
+        self.skill_registry = get_skill_registry()
+        
         # 初始化规则引擎
         if self.use_rule_engine:
             self.rule_classifier = RuleBasedIntentClassifier()
-            logger.info("✅ IntentRouter initialized with Rule Engine (Token Optimized)")
+            logger.info("✅ IntentRouter initialized with Skill Registry + Rule Engine (Phase 4)")
         else:
             self.rule_classifier = None
-            logger.info("✅ IntentRouter initialized (LLM only)")
+            logger.info("✅ IntentRouter initialized with Skill Registry only (Phase 4)")
         
         self.prompt_template = self._load_prompt_template()
         
@@ -274,7 +278,64 @@ class IntentRouter:
         # 统计
         self.stats["total_requests"] += 1
         
-        # ============= 🚀 优化：先尝试规则引擎 (0 tokens) =============
+        # ============= 🚀 Phase 4: 优先使用 Skill Registry (0 tokens) =============
+        skill_match = self.skill_registry.match_message(message)
+        
+        if skill_match and skill_match.confidence >= 0.8:
+            # Skill Registry 成功匹配！
+            logger.info(
+                f"✅ Skill Registry Match: {skill_match.skill_id} "
+                f"(confidence: {skill_match.confidence:.2f}) | "
+                f"Keywords: {skill_match.matched_keywords}"
+            )
+            
+            # 将 skill_id 转换为 intent（保持向后兼容）
+            intent_mapping = {
+                "quiz_skill": "quiz_request",
+                "explain_skill": "explain_request",
+                "flashcard_skill": "flashcard_request",
+                "notes_skill": "notes",
+                "mindmap_skill": "mindmap_request",
+                "learning_plan_skill": "learning_bundle"
+            }
+            
+            intent = intent_mapping.get(skill_match.skill_id, skill_match.skill_id)
+            
+            # 构建 IntentResult
+            intent_result = IntentResult(
+                intent=intent,
+                topic=skill_match.parameters.get('topic'),
+                target_artifact=None,
+                confidence=skill_match.confidence,
+                raw_text=message,
+                parameters=skill_match.parameters
+            )
+            
+            logger.info(
+                f"📊 Token Usage (Skill Registry) | Input: 0 | Output: 0 | Total: 0 | "
+                f"Time: <0.001s | Method: Skill Registry (Phase 4)"
+            )
+            logger.info(f"💰 Tokens Saved: ~3,000 | 100% savings")
+            
+            # 💾 保存 Intent Router 输出
+            self._save_intent_output(
+                user_message=message,
+                intent_results=[intent_result],
+                method="skill_registry",
+                tokens_used=0
+            )
+            
+            return [intent_result]
+        else:
+            if skill_match:
+                logger.debug(
+                    f"⚠️  Skill Registry low confidence: {skill_match.skill_id} "
+                    f"({skill_match.confidence:.2f}), falling back..."
+                )
+            else:
+                logger.debug("⚠️  No Skill Registry match, falling back...")
+        
+        # ============= 🚀 Fallback 1: 规则引擎 (0 tokens) =============
         if self.use_rule_engine and self.rule_classifier:
             rule_result = self.rule_classifier.classify(message, memory_summary)
             
@@ -343,8 +404,12 @@ class IntentRouter:
             # 🔥 兼容新版 generate 返回格式：Dict["content", "thinking", "usage"]
             response_text = response.get("content", response) if isinstance(response, dict) else response
             
+            # 🐛 DEBUG: Log the raw LLM response
+            logger.debug(f"🔍 LLM Response (raw): {response_text[:500]}")  # First 500 chars
+            
             # 解析 JSON 响应
             response_data = json.loads(response_text)
+            logger.debug(f"🔍 LLM Response (parsed): {response_data}")
             
             # 意图映射：统一化不同的表达
             intent_mapping = {
@@ -420,6 +485,9 @@ class IntentRouter:
                 # 如果提取了 quantity 参数，记录日志
                 if parameters.get("quantity"):
                     logger.info(f"📊 Extracted quantity parameter: {parameters['quantity']}")
+                
+                # 🐛 DEBUG: Log all extracted parameters
+                logger.debug(f"📊 All extracted parameters: {parameters}")
                 
                 # 创建结果对象
                 result = IntentResult(

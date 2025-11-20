@@ -9,12 +9,18 @@ intent_tags:
 input_schema:
   type: object
   properties:
+    subject:
+      type: string
+      description: "学科"
     topic:
       type: string
       description: "学习主题"
     source_content:
       type: string
       description: "源内容（可选，如果是基于上一轮内容生成笔记）"
+    reference_explanation:
+      type: object
+      description: "参考讲解内容（用于Plan Skill上下文传递）"
   required:
     - topic
 

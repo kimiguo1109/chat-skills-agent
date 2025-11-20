@@ -207,7 +207,7 @@ class KimiClient:
                         # 立即发送
                         buffered_text = "".join(reasoning_buffer)
                         if len(buffered_text) >= buffer_size:
-                            logger.info(f"🧠 Thinking stream: {len(buffered_text)} chars")
+                            # logger.info(f"🧠 Thinking stream: {len(buffered_text)} chars")
                             yield {
                                 "type": "thinking",
                                 "text": buffered_text,
@@ -230,7 +230,7 @@ class KimiClient:
                         # 立即发送（buffer_size=1意味着不再累积）
                         buffered_text = "".join(content_buffer)
                         if len(buffered_text) >= buffer_size:
-                            logger.info(f"📝 Content stream: {len(buffered_text)} chars")
+                            # logger.info(f"📝 Content stream: {len(buffered_text)} chars")
                             yield {
                                 "type": "content",
                                 "text": buffered_text,
@@ -241,7 +241,7 @@ class KimiClient:
             # 🆕 发送剩余缓冲区内容
             if reasoning_buffer:
                 buffered_text = "".join(reasoning_buffer)
-                logger.info(f"🧠 Reasoning final flush: {len(buffered_text)} chars")
+                # logger.info(f"🧠 Reasoning final flush: {len(buffered_text)} chars")
                 yield {
                     "type": "thinking",
                     "text": buffered_text,
@@ -250,7 +250,7 @@ class KimiClient:
             
             if content_buffer:
                 buffered_text = "".join(content_buffer)
-                logger.info(f"📝 Content final flush: {len(buffered_text)} chars")
+                # logger.info(f"📝 Content final flush: {len(buffered_text)} chars")
                 yield {
                     "type": "content",
                     "text": buffered_text,

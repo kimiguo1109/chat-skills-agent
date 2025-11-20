@@ -94,7 +94,7 @@ execution_plan:
       input_mapping:
         subject: "{input.subject}"
         topic: "{input.topic}"
-        quantity: "{input.flashcard_quantity|default:5}"  # 🔥 支持灵活控制数量，默认5
+        num_cards: "{input.flashcard_quantity|default:5}"  # 🔥 支持灵活控制数量，默认5（flashcard_skill 期望 num_cards）
         difficulty: "{input.difficulty}"
         # 🔥 传递完整解释内容，确保卡片内容与讲解一致
         reference_explanation: "{context.explain}"  # 完整的解释结果
@@ -116,7 +116,7 @@ execution_plan:
       input_mapping:
         subject: "{input.subject}"
         topic: "{input.topic}"
-        quantity: "{input.quiz_quantity|default:3}"  # 🔥 支持灵活控制数量，默认3
+        num_questions: "{input.quiz_quantity|default:3}"  # 🔥 支持灵活控制数量，默认3（quiz_skill 期望 num_questions）
         difficulty: "{input.difficulty}"
         # 🔥 传递完整解释和卡片内容，确保题目覆盖所有知识点
         reference_explanation: "{context.explain}"     # 完整的解释结果
@@ -127,6 +127,46 @@ execution_plan:
         strategy: "summary"
         fields:
           - "question_count"
+        max_tokens: 100
+    
+    # ============= Step 4: 学习笔记 (依赖讲解) =============
+    - step_id: "notes"
+      skill_id: "notes_skill"
+      display_name: "学习笔记"
+      order: 4
+      depends_on: ["explain"]  # 依赖讲解
+      
+      input_mapping:
+        subject: "{input.subject}"
+        topic: "{input.topic}"
+        # 🔥 传递完整解释内容，确保笔记内容与讲解一致
+        source_content: "{context.explain}"  # 基于讲解生成笔记
+        reference_explanation: "{context.explain}"  # 完整的解释结果
+      
+      context_extraction:
+        strategy: "summary"
+        fields:
+          - "notes_id"
+        max_tokens: 100
+    
+    # ============= Step 5: 思维导图 (依赖讲解) =============
+    - step_id: "mindmap"
+      skill_id: "mindmap_skill"
+      display_name: "知识结构图"
+      order: 5
+      depends_on: ["explain"]  # 依赖讲解
+      
+      input_mapping:
+        subject: "{input.subject}"
+        topic: "{input.topic}"
+        # 🔥 传递完整解释内容，确保思维导图基于讲解内容
+        content: "{context.explain.formal_definition}"  # 使用正式定义作为内容
+        reference_explanation: "{context.explain}"  # 完整的解释结果
+      
+      context_extraction:
+        strategy: "summary"
+        fields:
+          - "mindmap_id"
         max_tokens: 100
 
 # ============= 结果聚合配置 =============
@@ -144,13 +184,19 @@ aggregation:
         component_type: "flashcard"
       - step_id: "quiz"
         component_type: "quiz"
+      - step_id: "notes"
+        component_type: "notes"
+      - step_id: "mindmap"
+        component_type: "mindmap"
     
     # 学习路径模板
     learning_path_template:
       - "1. 阅读概念讲解（15分钟）- 理解核心概念和原理"
-      - "2. 使用抽认卡记忆（15分钟）- 记住关键知识点"
-      - "3. 完成练习题（15分钟）- 测试理解程度和应用能力"
-      - "4. 复习错题和难点 - 针对薄弱环节加强学习"
+      - "2. 查看思维导图（5分钟）- 可视化知识结构"
+      - "3. 使用抽认卡记忆（15分钟）- 记住关键知识点"
+      - "4. 完成练习题（15分钟）- 测试理解程度和应用能力"
+      - "5. 整理学习笔记（10分钟）- 巩固和内化知识"
+      - "6. 复习错题和难点 - 针对薄弱环节加强学习"
     
     # 总时长计算（从各 step 累加）
     total_time_calculation: "sum"  # 自动累加各 component 的时间

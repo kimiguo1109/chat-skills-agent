@@ -24,7 +24,7 @@ If user clearly says what they want, return that intent:
 - "mindmap" / "思维导图" → `intent="mindmap"`
 - "notes" / "笔记" / "总结" → `intent="notes"`
 - "学习资料" / "学习包" / "learning bundle" / "套餐" → `intent="learning_bundle"`
-  - *Extract sub-quantities if mentioned*: "3张卡片2道题" → `parameters={"flashcard_quantity": 3, "quiz_quantity": 2}`
+  - *Extract sub-quantities if mentioned*: "3张卡片2道题" → `parameters={{"flashcard_quantity": 3, "quiz_quantity": 2}}`
 - "功能" / "help" / "帮助" → `intent="help"`
 
 ### 2. AMBIGUOUS INTENTS (Need Preference)
@@ -40,9 +40,13 @@ If user references previous content, you MUST detect the reference type:
 - "根据这些例子" → `intent="contextual", reference_type="examples", reference_index="all"`
 - "基于刚才的讲解" → `intent="contextual", reference_type="last_artifact"`
 
-### 4. MIXED REQUESTS
-Multiple intents in one request:
-- "讲解X然后出题" → `intents=[{{explain}}, {{quiz}}]`
+### 4. MIXED REQUESTS (Learning Bundle)
+When user requests multiple related learning activities (explain + quiz/flashcard/notes):
+- "讲解X然后出题" → `intent="learning_bundle"` (NOT `intents` array!)
+- "解释X并生成3道题目" → `intent="learning_bundle", parameters={{"quiz_quantity": 3}}`
+- "X的讲解+闪卡" → `intent="learning_bundle"` (will include both explain and flashcard steps)
+- **IMPORTANT**: Only set `flashcard_quantity` or `quiz_quantity` if user explicitly mentions a number
+- **IMPORTANT**: If no number mentioned, do NOT include these parameters (let system use defaults)
 
 ### 5. OTHER
 Everything else (greetings, unclear, off-topic):
@@ -100,10 +104,18 @@ Input: "给我5道二战历史的题"
 Output: {{"intent": "quiz", "topic": "历史-二战", "confidence": 0.95, "parameters": {{"quantity": 5, "context_type": "clear"}}}}
 ```
 
-### Complex Learning Bundle (Mixed Parameters)
+### Learning Bundle (Multiple Components)
 ```
-Input: "光合作用3张闪卡和2道quiz题"
-Output: {{"intent": "learning_bundle", "topic": "光合作用", "confidence": 0.95, "parameters": {{"flashcard_quantity": 3, "quiz_quantity": 2, "context_type": "clear"}}}}
+Input: "光合作用的讲解和练习题"
+Output: {{"intent": "learning_bundle", "topic": "光合作用", "confidence": 0.95}}
+Note: System will generate all components (explain + flashcard + quiz) with default quantities.
+```
+
+### Learning Bundle with Quantity
+```
+Input: "二战历史的解释和3道题目"  
+Output: {{"intent": "learning_bundle", "topic": "二战历史", "confidence": 0.95}}
+Note: Extract quantities in parameters ONLY if explicitly mentioned with numbers. If user says "3道题", add quiz_quantity parameter.
 ```
 
 ### Ambiguous (Needs Preference)
