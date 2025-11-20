@@ -69,13 +69,32 @@ class KimiClient:
         """
         model_to_use = model or self.model
         
-        # Kimi API 使用 OpenAI 格式
-        # ⚠️ 注意：skill prompt 已经包含详细指导，这里保持简洁
-        messages = [
-            {"role": "user", "content": prompt}
-        ]
+        # ⚡⚡⚡ 应用 thinking_budget 控制（与流式保持一致）
+        if thinking_budget:
+            if thinking_budget <= 64:
+                content_budget = 3500
+            elif thinking_budget <= 128:
+                content_budget = 4000
+            else:
+                content_budget = 5000
+            actual_max_tokens = thinking_budget + content_budget
+            logger.info(f"⚡ Token Budget: thinking={thinking_budget}, content={content_budget}, total={actual_max_tokens}")
+        else:
+            actual_max_tokens = max_tokens
         
-        logger.info(f"🚀 Generating content: model={model_to_use}, temp={temperature}, max_tokens={max_tokens}")
+        # ⚡⚡⚡ 添加系统级约束
+        messages = []
+        if thinking_budget and thinking_budget <= 128:
+            system_constraint = (
+                f"CRITICAL: Strict {thinking_budget}-token thinking limit. "
+                f"Be EXTREMELY concise - 2-4 sentences MAX. "
+                f"Skip verbose reasoning. Focus only on core logic."
+            )
+            messages.append({"role": "system", "content": system_constraint})
+        
+        messages.append({"role": "user", "content": prompt})
+        
+        logger.info(f"🚀 Generating: model={model_to_use}, temp={temperature}, max_tokens={actual_max_tokens}, thinking_budget={thinking_budget}")
         
         try:
             # Kimi API 调用（通过 Novita AI）
@@ -83,7 +102,7 @@ class KimiClient:
                 model=model_to_use,
                 messages=messages,
                 temperature=temperature,
-                max_tokens=max_tokens,
+                max_tokens=actual_max_tokens,  # ⚡⚡⚡ 使用实际计算的 max_tokens
                 stream=False
             )
             
@@ -148,22 +167,61 @@ class KimiClient:
             prompt: 提示词
             model: 模型名称
             temperature: 温度参数
-            max_tokens: 最大 token 数
-            thinking_budget: Thinking 预算
+            max_tokens: 最大 token 数（总输出限制）
+            thinking_budget: Thinking 预算（如果设置，会覆盖 max_tokens）
             return_thinking: 是否返回 thinking
-            buffer_size: 缓冲区大小（默认50字符，减少碎片化）
+            buffer_size: 缓冲区大小（默认1字符，极限流式）
         
         Yields:
             Dict: {"type": "thinking|content|done|error", ...}
         """
         model_to_use = model or self.model
         
-        # ⚠️ 注意：skill prompt 已经包含详细指导，这里保持简洁
-        messages = [
-            {"role": "user", "content": prompt}
-        ]
+        # ⚡⚡⚡ 真正的 Token 控制：根据 thinking_budget 动态调整 max_tokens
+        # Thinking 模型的输出 = thinking_content + actual_content
+        # 
+        # 策略：
+        # - thinking_budget 小 (64) → 快速思考，适合简单任务
+        # - content_budget 中等 (3000-4000) → 确保输出质量不受影响
+        # 
+        # 实测数据：
+        # - Explain Skill (简单概念): thinking ~200 tokens, content ~1500 tokens
+        # - Quiz (3题): thinking ~150 tokens, content ~1200 tokens
+        # - Flashcard (5张): thinking ~100 tokens, content ~800 tokens
+        if thinking_budget:
+            # 根据 thinking_budget 智能分配 content budget
+            if thinking_budget <= 64:
+                # 极速模式：适合简单任务
+                content_budget = 3500  # 确保输出完整
+            elif thinking_budget <= 128:
+                # 标准模式：适合中等任务
+                content_budget = 4000
+            else:
+                # 深度模式：适合复杂任务
+                content_budget = 5000
+            
+            actual_max_tokens = thinking_budget + content_budget
+            logger.info(f"⚡ Token Budget: thinking={thinking_budget}, content={content_budget}, total={actual_max_tokens}")
+        else:
+            actual_max_tokens = max_tokens
+            logger.info(f"⚡ Using default max_tokens={actual_max_tokens}")
         
-        logger.info(f"🌊 Starting streaming generation: model={model_to_use}, buffer={buffer_size} chars")
+        # ⚡⚡⚡ 添加系统级约束来真正控制 thinking 长度
+        # 这比在 prompt 中"建议"更有效，因为它作为系统指令
+        messages = []
+        
+        if thinking_budget and thinking_budget <= 128:
+            # 对于小 thinking_budget，添加强制的系统约束
+            system_constraint = (
+                f"CRITICAL: Strict {thinking_budget}-token thinking limit. "
+                f"Be EXTREMELY concise - 2-4 sentences MAX. "
+                f"Skip verbose reasoning. Focus only on core logic."
+            )
+            messages.append({"role": "system", "content": system_constraint})
+        
+        messages.append({"role": "user", "content": prompt})
+        
+        logger.info(f"🌊 Starting streaming: model={model_to_use}, max_tokens={actual_max_tokens}, thinking_budget={thinking_budget}")
         
         # 累加器
         content_accumulated = []
@@ -179,7 +237,7 @@ class KimiClient:
                 model=model_to_use,
                 messages=messages,
                 temperature=temperature,
-                max_tokens=max_tokens,
+                max_tokens=actual_max_tokens,  # ⚡⚡⚡ 使用实际计算的 max_tokens
                 top_p=1.0,  # ⚡ 控制采样范围
                 presence_penalty=0.0,  # ⚡ 无重复惩罚
                 frequency_penalty=0.0,  # ⚡ 无频率惩罚
