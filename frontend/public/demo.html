@@ -642,28 +642,22 @@ function createStreamingResponseContainer(responseId) {
                 <!-- 🆕 Plan预览区域（最上面，独立显示） -->
                 <div id="${responseId}-plan-preview" class="w-full hidden"></div>
                 
-                <!-- 普通Skill的Thinking Summary（简洁概括） -->
+                <!-- 普通Skill的Thinking Summary（简洁概括，支持多行） -->
                 <div id="${responseId}-thinking-overview" class="w-full px-4 py-3 rounded-lg bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 hidden">
-                    <div class="flex items-center gap-2">
-                        <div class="w-2 h-2 rounded-full bg-blue-500 animate-pulse"></div>
-                        <span class="text-sm italic text-blue-700 dark:text-blue-400" id="${responseId}-thinking-overview-text">正在思考...</span>
+                    <div class="flex items-start gap-2">
+                        <div class="w-2 h-2 rounded-full bg-blue-500 animate-pulse flex-shrink-0 mt-1"></div>
+                        <span class="text-sm italic text-blue-700 dark:text-blue-400 leading-relaxed" id="${responseId}-thinking-overview-text">正在思考...</span>
                     </div>
                 </div>
                 
                 <!-- 普通Skill的完整思考过程区域（可折叠，默认展开） -->
                 <div id="${responseId}-thinking-section" class="w-full rounded-xl border border-border-light dark:border-border-dark bg-gray-50 dark:bg-gray-900/50 overflow-hidden hidden">
                     <details class="group" open>
-                        <summary class="flex items-center justify-between px-4 py-3 cursor-pointer hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors">
-                            <div class="flex items-center gap-2">
-                                <svg class="w-5 h-5 text-primary transition-transform group-open:rotate-90" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"></path>
-                                </svg>
-                                <span class="text-sm font-semibold text-text-light-primary dark:text-text-dark-primary">💭 完整思考过程</span>
-                            </div>
-                            <button onclick="document.getElementById('${responseId}-thinking-section').classList.add('hidden')" 
-                                    class="text-xs text-text-light-secondary dark:text-text-dark-secondary hover:text-primary px-2 py-1 rounded hover:bg-gray-200 dark:hover:bg-gray-700">
-                                隐藏
-                            </button>
+                        <summary class="flex items-center gap-2 px-4 py-3 cursor-pointer hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors">
+                            <svg class="w-5 h-5 text-primary transition-transform group-open:rotate-90" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"></path>
+                            </svg>
+                            <span class="text-sm font-semibold text-text-light-primary dark:text-text-dark-primary">💭 完整思考过程</span>
                         </summary>
                         <div class="px-4 py-3 border-t border-border-light dark:border-border-dark max-h-96 overflow-y-auto">
                             <pre id="${responseId}-thinking-content" class="whitespace-pre-wrap text-sm text-text-light-secondary dark:text-text-dark-secondary leading-relaxed"></pre>
@@ -952,13 +946,21 @@ function handleStreamChunk(responseId, data) {
                 }
             }
             
-            // 🆕 智能提取thinking summary（识别AI的思考阶段）
+            // 🆕 智能提取thinking summary（降低更新频率，减少跳动）
             const thinkingSummary = document.getElementById(`plan-step-${currentStep}-thinking-summary`);
             if (thinkingSummary && stepThinkingContent) {
                 const summaryText = thinkingSummary.querySelector('.thinking-summary-text');
                 if (summaryText) {
                     const fullText = stepThinkingContent.textContent;
-                    summaryText.textContent = extractThinkingSummary(fullText);
+                    // 🔥 降低更新频率：只在thinking内容达到一定长度或出现句号时才更新
+                    const shouldUpdate = fullText.length % 200 < 10 || /[.。!！?？]/.test(data.text);
+                    if (shouldUpdate) {
+                        const summary = extractThinkingSummary(fullText);
+                        // 只在summary真正改变时才更新（避免相同内容的闪烁）
+                        if (summaryText.textContent !== summary) {
+                            summaryText.textContent = summary;
+                        }
+                    }
                 }
             }
         } else {
@@ -994,7 +996,7 @@ function handleStreamChunk(responseId, data) {
                 }
             }
             
-            // 🆕 智能提取thinking summary（识别AI的思考阶段）
+            // 🆕 智能提取thinking summary（降低更新频率，减少跳动）
             const thinkingOverview = document.getElementById(`${responseId}-thinking-overview`);
             if (thinkingOverview) {
                 if (thinkingOverview.classList.contains('hidden')) {
@@ -1003,7 +1005,15 @@ function handleStreamChunk(responseId, data) {
                 const overviewText = document.getElementById(`${responseId}-thinking-overview-text`);
                 if (overviewText && thinkingEl) {
                     const fullText = thinkingEl.textContent;
-                    overviewText.textContent = extractThinkingSummary(fullText);
+                    // 🔥 降低更新频率：只在thinking内容达到一定长度或出现句号时才更新
+                    const shouldUpdate = fullText.length % 200 < 10 || /[.。!！?？]/.test(data.text);
+                    if (shouldUpdate) {
+                        const summary = extractThinkingSummary(fullText);
+                        // 只在summary真正改变时才更新（避免相同内容的闪烁）
+                        if (overviewText.textContent !== summary) {
+                            overviewText.textContent = summary;
+                        }
+                    }
                 }
             }
         }
@@ -1019,19 +1029,34 @@ function handleStreamChunk(responseId, data) {
         const currentStep = stepMatch ? parseInt(stepMatch[1]) : null;
         
         if (isPlanSkill && currentStep) {
-            // Plan Skill：更新thinking summary显示生成进度
+            // Plan Skill：更新thinking summary显示生成进度，添加动画
             const thinkingSummary = document.getElementById(`plan-step-${currentStep}-thinking-summary`);
             if (thinkingSummary) {
                 const summaryText = thinkingSummary.querySelector('.thinking-summary-text');
+                const pulseIcon = thinkingSummary.querySelector('.animate-pulse');
                 if (summaryText && !summaryText.textContent.includes('正在生成内容')) {
-                    summaryText.textContent = `正在生成内容...`;
+                    summaryText.textContent = `📝 正在生成内容...`;
+                    // 更改图标颜色为绿色，表示进入新阶段
+                    if (pulseIcon) {
+                        pulseIcon.classList.remove('bg-blue-500');
+                        pulseIcon.classList.add('bg-green-500');
+                    }
                 }
             }
         } else if (thinkingOverview) {
-            // 普通Skill：更新thinking overview显示生成进度
+            // 普通Skill：更新thinking overview显示生成进度，添加动画
             const overviewText = document.getElementById(`${responseId}-thinking-overview-text`);
+            const pulseIcon = thinkingOverview.querySelector('.animate-pulse');
             if (overviewText && !overviewText.textContent.includes('正在生成内容')) {
-                overviewText.textContent = '正在生成内容...';
+                overviewText.textContent = '📝 正在生成内容...';
+                // 更改图标颜色为绿色，表示进入新阶段
+                if (pulseIcon) {
+                    pulseIcon.classList.remove('bg-blue-500');
+                    pulseIcon.classList.add('bg-green-500');
+                }
+                // 添加渐变动画
+                thinkingOverview.style.transition = 'background-color 0.5s ease';
+                thinkingOverview.style.backgroundColor = 'rgba(34, 197, 94, 0.1)';
             }
         }
         
@@ -1204,10 +1229,10 @@ function renderPlanPreview(topic, stepsPreview, totalSteps) {
                                 ${escapeHtml(step.skill_id)}
                             </span>
                         </div>
-                        <!-- 🆕 Thinking Summary（简洁的一句话概括，始终可见） -->
-                        <div id="plan-step-${stepNumber}-thinking-summary" class="hidden mt-3 flex items-center gap-2 text-xs text-blue-700 dark:text-blue-400">
-                            <div class="w-2 h-2 rounded-full bg-blue-500 animate-pulse"></div>
-                            <span class="thinking-summary-text italic">正在思考...</span>
+                        <!-- 🆕 Thinking Summary（简洁概括，支持多行） -->
+                        <div id="plan-step-${stepNumber}-thinking-summary" class="hidden mt-3 flex items-start gap-2 text-xs text-blue-700 dark:text-blue-400">
+                            <div class="w-2 h-2 rounded-full bg-blue-500 animate-pulse flex-shrink-0 mt-1"></div>
+                            <span class="thinking-summary-text italic leading-relaxed">正在思考...</span>
                         </div>
                     </div>
                 </div>
@@ -2134,7 +2159,7 @@ function detectContentType(content) {
  * 策略：优先提取**最后出现**的动作，反映当前正在进行的思考阶段
  * 
  * @param {string} thinkingText - 完整的thinking内容
- * @returns {string} - 提取的summary（最多60个字符）
+ * @returns {string} - 提取的summary（最多100个字符，支持换行）
  */
 function extractThinkingSummary(thinkingText) {
     if (!thinkingText || thinkingText.trim().length === 0) {
@@ -2197,7 +2222,7 @@ function extractThinkingSummary(thinkingText) {
         try {
             const summary = bestMatch._template(bestMatch);
             if (summary && summary.length > 5) {
-                return summary.slice(0, 60);
+                return summary.slice(0, 100);  // 🔥 增加到100字符，减少截断
             }
         } catch (e) {
             console.warn('Summary extraction error:', e);
@@ -2257,7 +2282,7 @@ function extractThinkingSummary(thinkingText) {
     }
     
     if (lastChineseMatch) {
-        return lastChineseMatch.slice(0, 60);
+        return lastChineseMatch.slice(0, 100);  // 🔥 增加到100字符，减少截断
     }
     
     // 🆕 提取最后一个有意义的句子（优先英文，因为thinking通常是英文）
@@ -2269,25 +2294,25 @@ function extractThinkingSummary(thinkingText) {
         if (sentence.length >= 15 && sentence.length <= 100) {
             // 如果是英文句子，尝试翻译关键动词
             if (/^[a-zA-Z]/.test(sentence)) {
-                return `思考中：${sentence.slice(0, 40)}...`;
+                return `思考中：${sentence.slice(0, 80)}...`;  // 🔥 增加到80字符
             }
             // 如果是中文句子
             const chineseChars = sentence.match(/[\u4e00-\u9fa5]/g);
             if (chineseChars && chineseChars.length > 5) {
-                return sentence.slice(0, 60) + (sentence.length > 60 ? '...' : '');
+                return sentence.slice(0, 100) + (sentence.length > 100 ? '...' : '');  // 🔥 增加到100字符
             }
         }
     }
     
     // 最终fallback：智能截取（避免截断在单词中间）
     const finalText = thinkingText.trim();
-    if (finalText.length <= 60) {
+    if (finalText.length <= 100) {  // 🔥 增加到100字符
         return finalText;
     }
     
-    // 在60字符附近找一个空格或标点，避免截断单词
-    let cutoff = 60;
-    for (let i = 60; i < Math.min(70, finalText.length); i++) {
+    // 在100字符附近找一个空格或标点，避免截断单词
+    let cutoff = 100;
+    for (let i = 100; i < Math.min(120, finalText.length); i++) {
         if (/[\s,.;:!?。，；：！？]/.test(finalText[i])) {
             cutoff = i;
             break;

@@ -5,6 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
+    "dev:demo": "vite --open /demo-react.html",
     "build": "tsc -b && vite build",
     "lint": "eslint .",
     "preview": "vite preview"
