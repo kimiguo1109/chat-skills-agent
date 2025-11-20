@@ -50,3 +50,9 @@ session_contexts/
 # Uploads
 uploads/
 
+# Memory storage test files
+backend/memory_storage/session_*.json
+backend/memory_storage/profile_*.json
+backend/memory_storage/intent_router_output.json
+backend/memory_storage/thinking_overview_debug.json
+
