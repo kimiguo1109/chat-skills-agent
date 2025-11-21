@@ -340,6 +340,31 @@ class SkillOrchestrator:
                 logger.error(f"❌ Failed to save artifact in stream mode: {e}")
                 # 不中断流程，继续返回结果
             
+            # Step 9: 追加到 Conversation Session MD 文件
+            try:
+                session_mgr = self.memory_manager.get_conversation_session_manager(user_id)
+                await session_mgr.start_or_continue_session(intent_result.raw_text)
+                
+                await session_mgr.append_turn({
+                    "user_query": intent_result.raw_text,
+                    "agent_response": {
+                        "skill": skill.id,
+                        "artifact_id": parsed_content.get("artifact_id", ""),
+                        "content": parsed_content
+                    },
+                    "response_type": content_type,
+                    "timestamp": datetime.now(),
+                    "intent": intent_result.model_dump(),
+                    "metadata": {
+                        "thinking_tokens": len(full_thinking.split()),  # 粗略估算
+                        "output_tokens": len(full_content.split()),  # 粗略估算
+                        "model": skill.models.get("primary", "unknown")
+                    }
+                })
+                logger.debug(f"📝 Appended turn to conversation session MD (stream mode)")
+            except Exception as e:
+                logger.error(f"❌ Failed to append to conversation session (stream): {e}")
+            
             # 完成
             yield {
                 "type": "done",
@@ -750,6 +775,31 @@ class SkillOrchestrator:
         
         # Step 6: 更新记忆（异步，不阻塞）
         await self._update_memory(user_id, session_id, intent_result, result)
+        
+        # Step 7: 追加到 Conversation Session MD 文件
+        try:
+            session_mgr = self.memory_manager.get_conversation_session_manager(user_id)
+            await session_mgr.start_or_continue_session(intent_result.raw_text)
+            
+            await session_mgr.append_turn({
+                "user_query": intent_result.raw_text,
+                "agent_response": {
+                    "skill": skill.id,
+                    "artifact_id": result.get("artifact_id", ""),
+                    "content": result
+                },
+                "response_type": output.get("content_type", "unknown"),
+                "timestamp": datetime.now(),
+                "intent": intent_result.model_dump(),
+                "metadata": {
+                    "thinking_tokens": result.get("_usage", {}).get("thinking_tokens", 0),
+                    "output_tokens": result.get("_usage", {}).get("output_tokens", 0),
+                    "model": skill.models.get("primary", "unknown")
+                }
+            })
+            logger.debug(f"📝 Appended turn to conversation session MD")
+        except Exception as e:
+            logger.error(f"❌ Failed to append to conversation session: {e}")
         
         logger.info(f"✅ Orchestration complete for {skill.id}")
         return output

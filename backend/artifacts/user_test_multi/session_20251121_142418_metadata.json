@@ -1,0 +1,16 @@
+{
+  "session_id": "session_20251121_142418",
+  "user_id": "user_test_multi",
+  "start_time": "2025-11-21T14:24:18.013779",
+  "last_updated": "2025-11-21T14:26:18.013779",
+  "status": "active",
+  "total_turns": 2,
+  "topics": [
+    "光合作用"
+  ],
+  "skills_used": {
+    "explanation": 1,
+    "quiz_set": 1
+  },
+  "artifacts_generated": []
+}

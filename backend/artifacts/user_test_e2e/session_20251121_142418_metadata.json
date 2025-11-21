@@ -1,0 +1,22 @@
+{
+  "session_id": "session_20251121_142418",
+  "user_id": "user_test_e2e",
+  "start_time": "2025-11-21T14:24:18.009598",
+  "last_updated": "2025-11-21T14:24:18.010055",
+  "status": "active",
+  "total_turns": 1,
+  "topics": [
+    "光合作用"
+  ],
+  "skills_used": {
+    "explanation": 1
+  },
+  "artifacts_generated": [
+    {
+      "turn": 1,
+      "type": "explanation",
+      "artifact_id": "test_artifact_123",
+      "topic": "光合作用"
+    }
+  ]
+}
