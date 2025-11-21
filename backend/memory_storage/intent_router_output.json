@@ -1,60 +1,9 @@
 {
   "description": "Intent Router 实时输出记录 (Phase 3 架构)",
-  "latest": {
-    "timestamp": "2025-11-21T10:11:13.459749",
-    "user_message": "给我二战历史学习资料",
-    "method": "skill_registry",
-    "tokens_used": 0,
-    "results": [
-      {
-        "intent": "explain_request",
-        "topic": "资料",
-        "confidence": 1.0,
-        "parameters": {
-          "topic": "资料",
-          "concept_name": "资料"
-        }
-      }
-    ]
-  },
-  "history": [
-    {
-      "timestamp": "2025-11-21T10:10:22.977013",
-      "user_message": "什么是光合作用",
-      "method": "skill_registry",
-      "tokens_used": 0,
-      "results": [
-        {
-          "intent": "explain_request",
-          "topic": "光合作用",
-          "confidence": 1.0,
-          "parameters": {
-            "topic": "光合作用",
-            "concept_name": "光合作用"
-          }
-        }
-      ]
-    },
-    {
-      "timestamp": "2025-11-21T10:11:13.459749",
-      "user_message": "给我二战历史学习资料",
-      "method": "skill_registry",
-      "tokens_used": 0,
-      "results": [
-        {
-          "intent": "explain_request",
-          "topic": "资料",
-          "confidence": 1.0,
-          "parameters": {
-            "topic": "资料",
-            "concept_name": "资料"
-          }
-        }
-      ]
-    }
-  ],
+  "latest": {},
+  "history": [],
   "stats": {
-    "total_requests": 2,
+    "total_requests": 0,
     "rule_based_success": 0,
     "llm_fallback": 0,
     "rule_success_rate": "0.0%"
