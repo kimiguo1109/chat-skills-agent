@@ -131,6 +131,12 @@ class ConversationSessionManager:
             timestamp: 创建时间
             user_message: 首条消息（用于检测关联）
         """
+        # 🆕 从旧 session 继承主题
+        last_topic_from_previous_session = None
+        if self.session_metadata.get("last_topic"):
+            last_topic_from_previous_session = self.session_metadata["last_topic"]
+            logger.info(f"📚 Inheriting topic from previous session: {last_topic_from_previous_session}")
+        
         # 生成 session ID
         self.current_session_id = self._generate_session_id(timestamp)
         
@@ -140,7 +146,7 @@ class ConversationSessionManager:
         # 重置 turn 计数器
         self.turn_counter = 0
         
-        # 初始化 session 元数据
+        # 初始化 session 元数据（继承上一个 session 的主题）
         self.session_metadata = {
             "session_id": self.current_session_id,
             "user_id": self.user_id,
@@ -148,6 +154,8 @@ class ConversationSessionManager:
             "last_updated": timestamp.isoformat(),
             "status": "active",
             "total_turns": 0,
+            "inherited_topic": last_topic_from_previous_session,  # 🆕 继承的主题
+            "last_topic": last_topic_from_previous_session,  # 🆕 当前主题初始化为继承的主题
             "topics": [],
             "skills_used": {},
             "artifacts_generated": []
@@ -398,8 +406,12 @@ class ConversationSessionManager:
         # 更新 topics
         if "topic" in turn_data.get("intent", {}):
             topic = turn_data["intent"]["topic"]
-            if topic and topic not in metadata["topics"]:
-                metadata["topics"].append(topic)
+            if topic:
+                if topic not in metadata["topics"]:
+                    metadata["topics"].append(topic)
+                # 🆕 更新 last_topic（用于跨 session 继承）
+                metadata["last_topic"] = topic
+                logger.debug(f"📚 Updated last_topic: {topic}")
         
         # 更新 skills_used
         response_type = turn_data.get("response_type", "unknown")

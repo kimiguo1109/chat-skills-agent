@@ -183,7 +183,8 @@ async def agent_chat(
         last_artifact_summary = "No previous interaction."
         try:
             session_context = await orchestrator.memory_manager.get_session_context(
-                session_id=request.session_id
+                session_id=request.session_id,
+                user_id=request.user_id
             )
             if session_context and session_context.last_artifact and session_context.last_artifact_content:
                 # 生成简短的摘要
@@ -297,7 +298,8 @@ async def agent_chat(
             # 尝试从 session_context 获取上一个学习主题和具体内容
             try:
                 session_context = await orchestrator.memory_manager.get_session_context(
-                    session_id=request.session_id
+                    session_id=request.session_id,
+                    user_id=request.user_id
                 )
                 if session_context and session_context.last_artifact:
                     # 只有当 last_artifact 是学习相关类型时才提取主题
@@ -634,7 +636,8 @@ async def agent_chat(
         # 🆕 更新 session context（last_user_message + artifact_history）
         try:
             session_context = await orchestrator.memory_manager.get_session_context(
-                session_id=request.session_id
+                session_id=request.session_id,
+                user_id=request.user_id
             )
             
             if session_context:
@@ -790,7 +793,10 @@ async def agent_chat_stream(
             )
             
             # 获取 last artifact summary
-            session_context = await memory_manager.get_session_context(request.session_id)
+            session_context = await memory_manager.get_session_context(
+                session_id=request.session_id,
+                user_id=request.user_id
+            )
             last_artifact_summary = None
             if session_context and hasattr(session_context, 'last_artifact'):
                 last_artifact_summary = f"User just interacted with: {session_context.last_artifact}"

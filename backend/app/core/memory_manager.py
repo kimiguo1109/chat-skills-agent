@@ -127,25 +127,35 @@ class MemoryManager:
     
     # ============= Session Context =============
     
-    async def get_session_context(self, session_id: str) -> SessionContext:
+    async def get_session_context(self, session_id: str, user_id: Optional[str] = None) -> SessionContext:
         """
         获取会话上下文
         
         Args:
             session_id: 会话 ID
+            user_id: 用户 ID（可选，用于从 ConversationSessionManager 获取 inherited_topic）
         
         Returns:
             SessionContext: 会话上下文
         """
         if self.use_s3:
-            return await self._get_session_context_from_s3(session_id)
+            return await self._get_session_context_from_s3(session_id, user_id)
         
         # 从内存获取，如果不存在则创建默认上下文
         if session_id not in self._session_contexts:
             logger.info(f"📝 Creating new session context for {session_id}")
+            
+            # 🆕 尝试从 ConversationSessionManager 获取 inherited_topic
+            inherited_topic = None
+            if user_id and user_id in self._conversation_sessions:
+                conversation_mgr = self._conversation_sessions[user_id]
+                inherited_topic = conversation_mgr.session_metadata.get("inherited_topic")
+                if inherited_topic:
+                    logger.info(f"📚 Using inherited_topic from conversation session: {inherited_topic}")
+            
             self._session_contexts[session_id] = SessionContext(
                 session_id=session_id,
-                current_topic=None,
+                current_topic=inherited_topic,  # 🆕 使用继承的主题
                 recent_intents=[],
                 last_artifact=None,
                 last_user_message=""
@@ -354,13 +364,21 @@ class MemoryManager:
         self._user_profiles[user_id] = profile
         return profile
     
-    async def _get_session_context_from_s3(self, session_id: str) -> SessionContext:
+    async def _get_session_context_from_s3(self, session_id: str, user_id: Optional[str] = None) -> SessionContext:
         """从 S3 获取会话上下文（占位符）"""
         # 占位符：使用内存存储
         if session_id not in self._session_contexts:
+            # 🆕 尝试从 ConversationSessionManager 获取 inherited_topic
+            inherited_topic = None
+            if user_id and user_id in self._conversation_sessions:
+                conversation_mgr = self._conversation_sessions[user_id]
+                inherited_topic = conversation_mgr.session_metadata.get("inherited_topic")
+                if inherited_topic:
+                    logger.info(f"📚 Using inherited_topic from conversation session: {inherited_topic}")
+            
             self._session_contexts[session_id] = SessionContext(
                 session_id=session_id,
-                current_topic=None,
+                current_topic=inherited_topic,  # 🆕 使用继承的主题
                 recent_intents=[],
                 last_artifact=None,
                 last_user_message=""
