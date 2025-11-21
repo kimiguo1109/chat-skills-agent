@@ -1071,6 +1071,7 @@ function handleStreamChunk(responseId, data) {
                 if (contentType === 'explanation' && result.concept) {
                     // console.log(`[DEBUG] Rendering explanation card`);
                     stepOutputContent.innerHTML = renderExplainCard(result);
+                    renderMathInContent(stepOutputContent); // 🔥 渲染 LaTeX
                 } else if (contentType === 'flashcard_set' && result.cards) {
                     // console.log(`[DEBUG] Rendering flashcard set`);
                     stepOutputContent.innerHTML = renderFlashcardSet(result);
@@ -1609,12 +1610,15 @@ function handleStreamChunk(responseId, data) {
             // 渲染不同类型的卡片
             if (contentType === 'quiz_set' && data.content.questions) {
                 planFinalContent.innerHTML = renderQuizCard(data.content);
+                renderMathInContent(planFinalContent);
             } else if (contentType === 'explanation' && data.content.concept) {
                 planFinalContent.innerHTML = renderExplainCard(data.content);
+                renderMathInContent(planFinalContent); // 🔥 渲染 LaTeX
             } else if (contentType === 'flashcard_set' && data.content.cards) {
                 planFinalContent.innerHTML = renderFlashcardSet(data.content);
             } else if (contentType === 'learning_bundle' && data.content.components) {
                 planFinalContent.innerHTML = renderLearningBundle(data.content);
+                renderMathInContent(planFinalContent); // 🔥 渲染 LaTeX (包括 bundle 内的所有组件)
             } else if (contentType === 'mindmap' && data.content.root) {
                 planFinalContent.innerHTML = renderMindMapCard(data.content);
             } else if (contentType === 'notes' && data.content.structured_notes) {
@@ -1631,12 +1635,15 @@ function handleStreamChunk(responseId, data) {
             // 渲染不同类型的卡片
             if (contentType === 'quiz_set' && data.content.questions) {
                 finalEl.innerHTML = renderQuizCard(data.content);
+                renderMathInContent(finalEl);
             } else if (contentType === 'explanation' && data.content.concept) {
                 finalEl.innerHTML = renderExplainCard(data.content);
+                renderMathInContent(finalEl); // 🔥 渲染 LaTeX
             } else if (contentType === 'flashcard_set' && data.content.cards) {
                 finalEl.innerHTML = renderFlashcardSet(data.content);
             } else if (contentType === 'learning_bundle' && data.content.components) {
                 finalEl.innerHTML = renderLearningBundle(data.content);
+                renderMathInContent(finalEl); // 🔥 渲染 LaTeX (包括 bundle 内的所有组件)
             } else if (contentType === 'mindmap' && data.content.root) {
                 finalEl.innerHTML = renderMindMapCard(data.content);
             } else if (contentType === 'notes' && data.content.structured_notes) {
@@ -2163,6 +2170,7 @@ function renderLearningBundle(content) {
         
         if (comp.component_type === 'explanation' && comp.content.concept) {
             html += renderExplainCard(comp.content);
+            // LaTeX 渲染将在整个 bundle 渲染完成后统一处理
         } else if (comp.component_type === 'quiz' && comp.content.questions) {
             html += renderQuizCard(comp.content);
         } else if (comp.component_type === 'flashcard' && comp.content.cards) {
@@ -2760,6 +2768,13 @@ function addAgentMessage(data) {
         </div>
     `;
     messagesDiv.insertAdjacentHTML('beforeend', agentMsg);
+    
+    // 🔥 渲染新插入消息中的 LaTeX
+    const lastMessage = messagesDiv.lastElementChild;
+    if (lastMessage) {
+        renderMathInContent(lastMessage);
+    }
+    
     scrollToBottom();
 }
 
