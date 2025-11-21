@@ -74,13 +74,13 @@ class S3StorageManager:
         try:
             # 上传到 S3
             self.s3_client.put_object(
-                Bucket=self.bucket_name,
+                Bucket=self.bucket,
                 Key=s3_key,
                 Body=content.encode('utf-8'),
                 ContentType=content_type
             )
             
-            s3_uri = f"s3://{self.bucket_name}/{s3_key}"
+            s3_uri = f"s3://{self.bucket}/{s3_key}"
             logger.debug(f"☁️  Uploaded to S3: {s3_uri}")
             
             return s3_uri
