@@ -517,6 +517,70 @@ class SkillOrchestrator:
         """
         logger.info(f"🎯 Orchestrating: intent={intent_result.intent}, topic={intent_result.topic}, confidence={intent_result.confidence:.2f}")
         
+        # ============= Phase -1: 处理 Skill Registry 的 clarification_needed =============
+        
+        if intent_result.intent == "clarification_needed":
+            reason = intent_result.parameters.get('clarification_reason')
+            logger.warning(f"⚠️  Clarification needed: {reason}")
+            
+            if reason == "topic_missing":
+                # Topic 缺失，需要用户提供
+                # 检查历史 topics
+                session_context = await self.memory_manager.get_session_context(session_id)
+                recent_topics = []
+                if session_context and session_context.topics:
+                    recent_topics = session_context.topics[-5:]  # 最近5个topics
+                
+                if recent_topics:
+                    # 有历史 topics，让用户选择
+                    return {
+                        "content_type": "clarification_needed",
+                        "intent": "clarification",
+                        "response_content": {
+                            "question": "您想基于以下哪个主题继续？",
+                            "reason": "topic_missing",
+                            "options": [
+                                {
+                                    "type": "topic",
+                                    "label": topic,
+                                    "value": topic,
+                                    "icon": "📚",
+                                    "description": f"继续学习：{topic}"
+                                }
+                                for topic in recent_topics
+                            ],
+                            "allow_custom_input": True,
+                            "custom_input_placeholder": "或输入新的学习主题..."
+                        }
+                    }
+                else:
+                    # 没有历史 topics，请求用户输入
+                    return {
+                        "content_type": "clarification_needed",
+                        "intent": "clarification",
+                        "response_content": {
+                            "question": "请问您想学习什么主题？",
+                            "reason": "topic_missing",
+                            "options": [],
+                            "allow_custom_input": True,
+                            "custom_input_placeholder": "例如：光合作用、二战历史、微积分..."
+                        }
+                    }
+            
+            elif reason == "multi_topic_insufficient":
+                # 用户请求多个 topics，但历史不足
+                return {
+                    "content_type": "clarification_needed",
+                    "intent": "clarification",
+                    "response_content": {
+                        "question": "您提到了多个主题，但我暂时只记录了一个主题。可以告诉我具体是哪些主题吗？",
+                        "reason": "multi_topic_insufficient",
+                        "options": [],
+                        "allow_custom_input": True,
+                        "custom_input_placeholder": "例如：光合作用和二战历史"
+                    }
+                }
+        
         # ============= Phase 0: 智能澄清机制（优先级最高）=============
         
         # 🆕 置信度过低：提供澄清选项

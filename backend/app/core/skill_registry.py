@@ -286,7 +286,8 @@ class SkillRegistry:
     def match_message(
         self, 
         message: str, 
-        current_topic: Optional[str] = None
+        current_topic: Optional[str] = None,
+        session_topics: Optional[List[str]] = None
     ) -> Optional[SkillMatch]:
         """
         匹配用户消息到技能（0 tokens）
@@ -296,6 +297,7 @@ class SkillRegistry:
         Args:
             message: 用户消息
             current_topic: 当前对话主题（从 session_context 获取）
+            session_topics: 历史topics列表（从 session_context）
         
         Returns:
             SkillMatch 或 None（未匹配）
@@ -320,8 +322,17 @@ class SkillRegistry:
             if not matched_keywords:
                 continue  # 没有匹配关键词，跳过
             
-            # 提取参数（传递 current_topic）
-            parameters = self._extract_parameters(message, metadata, skill_id, current_topic)
+            # 提取参数（传递 current_topic 和 session_topics）
+            parameters = self._extract_parameters(message, metadata, skill_id, current_topic, session_topics)
+            
+            # 🔥 如果参数中标记需要 clarification，立即返回
+            if parameters.get('needs_clarification'):
+                return SkillMatch(
+                    skill_id="clarification_needed",
+                    confidence=1.0,
+                    parameters=parameters,
+                    matched_keywords=['clarification']
+                )
             
             # 计算置信度
             confidence = self._calculate_confidence(
@@ -363,7 +374,8 @@ class SkillRegistry:
         message: str,
         metadata: Dict[str, Any],
         skill_id: str,
-        current_topic: Optional[str] = None
+        current_topic: Optional[str] = None,
+        session_topics: Optional[List[str]] = None
     ) -> Dict[str, Any]:
         """
         从消息中提取参数
@@ -373,6 +385,7 @@ class SkillRegistry:
             metadata: 技能元数据
             skill_id: 技能 ID
             current_topic: 当前对话主题（从 session_context）
+            session_topics: 历史topics列表（从 session_context）
         
         Returns:
             parameters dict (topic, quantity, use_last_artifact, etc.)
@@ -415,7 +428,33 @@ class SkillRegistry:
             
             logger.debug(f"📊 Extracted quantity: {quantity_value}")
         
-        # 2. 提取主题
+        # 🔥 2. 检测多 topic 引用（如"刚刚两个topic的知识导图"）
+        multi_topic_patterns = [
+            r'(两个|2个|三个|3个|多个)[的]?(topic|主题)',
+            r'(刚刚|刚才|前面|上面)[的]?(两个|2个|三个|3个|所有)[的]?(topic|主题)',
+            r'(所有|全部)[的]?(topic|主题)',
+        ]
+        
+        for pattern in multi_topic_patterns:
+            if re.search(pattern, message):
+                # 用户要求多个 topics
+                if session_topics and len(session_topics) > 1:
+                    # 提取最近的2-3个 topics
+                    recent_topics = session_topics[-3:] if len(session_topics) >= 3 else session_topics
+                    combined_topic = " + ".join(recent_topics)
+                    params['topic'] = combined_topic
+                    params['multi_topic'] = True
+                    params['topic_list'] = recent_topics
+                    logger.info(f"🔀 Detected multi-topic request: {recent_topics}")
+                    return params
+                else:
+                    # 历史 topics 不足，需要 clarification
+                    params['needs_clarification'] = True
+                    params['clarification_reason'] = "multi_topic_insufficient"
+                    logger.warning(f"⚠️  User requested multiple topics but session history insufficient")
+                    return params
+        
+        # 3. 提取主题
         topic = self._extract_topic(message, metadata)
         
         # 🔥 如果消息中没有明确主题，但有 current_topic，使用它
@@ -423,13 +462,23 @@ class SkillRegistry:
             topic = current_topic
             logger.info(f"📚 Using current_topic from context: {topic}")
         
+        # 🔥 如果仍然没有 topic，检查是否需要 clarification
+        if not topic:
+            # 检查是否是需要 topic 的 skill
+            needs_topic_skills = ['explain_skill', 'quiz_skill', 'flashcard_skill', 'notes_skill', 'mindmap_skill']
+            if skill_id in needs_topic_skills:
+                params['needs_clarification'] = True
+                params['clarification_reason'] = "topic_missing"
+                logger.warning(f"⚠️  Topic required for {skill_id} but not found")
+                return params
+        
         if topic:
             params['topic'] = topic
             # 对于 explain_skill，topic 应该设置为 concept_name
             if skill_id == 'explain_skill':
                 params['concept_name'] = topic
         
-        # 3. 检测上下文引用 - 使用简单的关键词检测
+        # 4. 检测上下文引用 - 使用简单的关键词检测
         context_keywords = ['根据', '基于', '刚才', '这些', '这道', '上面', '第一', '第二', '第三', '第', '再来', '再给']
         if any(kw in message for kw in context_keywords):
             params['use_last_artifact'] = True
@@ -440,7 +489,19 @@ class SkillRegistry:
     def _extract_topic(self, message: str, metadata: Dict[str, Any]) -> Optional[str]:
         """从消息中提取主题 - 使用简单直接的方法"""
         
-        # 优化的主题提取模式（按优先级排序）
+        # 🔥 Step 1: 检测隐式上下文引用（这些情况应返回 None，由 current_topic 填充）
+        implicit_reference_patterns = [
+            r'^(需要|想要|给我|来|要|生成|创建)[知识导图闪卡题目笔记]',  # "需要知识导图"、"给我闪卡"
+            r'^(不对|再|继续|还要|刚刚|刚才|这个|那个)',           # "再来几道"、"刚刚的"
+            r'(刚刚|刚才|上面|前面|这些)[的]?(topic|主题)',      # "刚刚两个topic"
+        ]
+        
+        for pattern in implicit_reference_patterns:
+            if re.search(pattern, message):
+                logger.debug(f"🔗 Detected implicit context reference, will use current_topic")
+                return None  # 明确返回 None，让调用者使用 current_topic
+        
+        # 🔥 Step 2: 优化的主题提取模式（按优先级排序）
         topic_patterns = [
             # 🆕 最高优先级：明确的"XXX的解释/说明"结构
             r'(.+?)的(?:解释|讲解|说明|介绍|定义)',          # "二战起因的解释"
@@ -456,9 +517,6 @@ class SkillRegistry:
             
             # 中优先级：带数量词的模式
             r'(?:\d+|[一二三四五六七八九十两])[道个张份题卡](.+?)(?:的)?[题笔闪导卡图记]',  # "3道光合作用的题"
-            
-            # 低优先级：宽松匹配
-            r'(.+?)[的]?[题笔闪导卡图记]',             # "光合作用的题"
         ]
         
         for pattern in topic_patterns:
@@ -469,14 +527,19 @@ class SkillRegistry:
                 # 清理主题
                 topic = self._clean_topic(topic)
                 
-                # 验证提取的主题有效性
-                # 排除一些明显无效的结果
+                # 🔥 Step 3: 更严格的验证 - 排除动作词和明显无效的主题
                 invalid_topics = [
-                    '我需要', '帮我', '给我', '我要', '再来', '再给', '再出', '出',
+                    '我需要', '帮我', '给我', '我要', '再来', '再给', '再出', '出', '需要', '想要',
                     '选择', '判断', '填空', '简答',  # 题目类型，不是主题
                     '学习', '复习', '练习', '测试',  # 动作词，不是主题
+                    '知识', 'topic', '主题', '内容',  # 太泛化
                 ]
-                if topic and len(topic) >= 2 and topic not in invalid_topics:
+                
+                # 🔥 检查是否以动作词开头（这些不是有效主题）
+                action_prefixes = ['需要', '想要', '给我', '帮我', '我要', '再来', '再给']
+                starts_with_action = any(topic.startswith(prefix) for prefix in action_prefixes)
+                
+                if topic and len(topic) >= 2 and topic not in invalid_topics and not starts_with_action:
                     logger.debug(f"📝 Extracted topic: {topic} (pattern: {pattern})")
                     return topic
         

@@ -1,0 +1,123 @@
+{
+  "step_id": "artifact_mindmap_request_需要知识_f3e5c754_1763711759",
+  "session_id": "user_kimi",
+  "timestamp": "2025-11-21T15:55:59.267800",
+  "result": {
+    "mindmap_id": "mindmap_需要知识",
+    "subject": "学习策略",
+    "topic": "需要知识",
+    "root": {
+      "id": "root",
+      "text": "需要知识",
+      "color": "#10b981",
+      "children": [
+        {
+          "id": "node-1",
+          "text": "识别需求",
+          "color": "#3b82f6",
+          "children": [
+            {
+              "id": "node-1-1",
+              "text": "练习题反馈",
+              "color": "#6b7280",
+              "children": []
+            },
+            {
+              "id": "node-1-2",
+              "text": "自我诊断",
+              "color": "#6b7280",
+              "children": []
+            },
+            {
+              "id": "node-1-3",
+              "text": "目标分析",
+              "color": "#6b7280",
+              "children": []
+            }
+          ]
+        },
+        {
+          "id": "node-2",
+          "text": "获取知识",
+          "color": "#3b82f6",
+          "children": [
+            {
+              "id": "node-2-1",
+              "text": "概念理解",
+              "color": "#6b7280",
+              "children": []
+            },
+            {
+              "id": "node-2-2",
+              "text": "资源整合",
+              "color": "#6b7280",
+              "children": []
+            },
+            {
+              "id": "node-2-3",
+              "text": "深度学习",
+              "color": "#6b7280",
+              "children": []
+            }
+          ]
+        },
+        {
+          "id": "node-3",
+          "text": "应用实践",
+          "color": "#3b82f6",
+          "children": [
+            {
+              "id": "node-3-1",
+              "text": "解决问题",
+              "color": "#6b7280",
+              "children": []
+            },
+            {
+              "id": "node-3-2",
+              "text": "知识迁移",
+              "color": "#6b7280",
+              "children": []
+            },
+            {
+              "id": "node-3-3",
+              "text": "案例分析",
+              "color": "#6b7280",
+              "children": []
+            }
+          ]
+        },
+        {
+          "id": "node-4",
+          "text": "评估效果",
+          "color": "#3b82f6",
+          "children": [
+            {
+              "id": "node-4-1",
+              "text": "掌握程度",
+              "color": "#6b7280",
+              "children": []
+            },
+            {
+              "id": "node-4-2",
+              "text": "持续改进",
+              "color": "#6b7280",
+              "children": []
+            },
+            {
+              "id": "node-4-3",
+              "text": "反馈循环",
+              "color": "#6b7280",
+              "children": []
+            }
+          ]
+        }
+      ]
+    },
+    "structure_summary": "以需要知识为核心，构建识别需求、获取知识、应用实践、评估效果四个维度，每个维度下设三个具体要点，形成完整的学习闭环。"
+  },
+  "metadata": {
+    "artifact_type": "mindmap_request",
+    "topic": "需要知识",
+    "size_bytes": 1360
+  }
+}

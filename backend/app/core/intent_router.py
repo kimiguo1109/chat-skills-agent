@@ -254,7 +254,8 @@ class IntentRouter:
         message: str,
         memory_summary: Optional[str] = None,
         last_artifact_summary: Optional[str] = None,
-        current_topic: Optional[str] = None
+        current_topic: Optional[str] = None,
+        session_topics: Optional[list] = None
     ) -> list[IntentResult]:
         """
         解析用户消息，识别意图
@@ -268,6 +269,7 @@ class IntentRouter:
             memory_summary: 可选的记忆摘要，用于增强识别准确度
             last_artifact_summary: 上一轮 artifact 摘要（用于上下文引用）
             current_topic: 当前对话主题（从 session_context）
+            session_topics: 历史topics列表（从 session_context）
         
         Returns:
             list[IntentResult]: 意图识别结果列表
@@ -278,12 +280,30 @@ class IntentRouter:
         logger.info(f"🔍 Parsing intent for message: {message[:50]}...")
         if current_topic:
             logger.info(f"📚 Current topic from context: {current_topic}")
+        if session_topics:
+            logger.info(f"📚 Session topics: {session_topics}")
         
         # 统计
         self.stats["total_requests"] += 1
         
         # ============= 🚀 Phase 4: 优先使用 Skill Registry (0 tokens) =============
-        skill_match = self.skill_registry.match_message(message, current_topic)
+        skill_match = self.skill_registry.match_message(message, current_topic, session_topics)
+        
+        # 🔥 处理 clarification needed 情况
+        if skill_match and skill_match.skill_id == "clarification_needed":
+            logger.warning(f"⚠️  Clarification needed: {skill_match.parameters.get('clarification_reason')}")
+            
+            # 返回 clarification intent
+            clarification_result = IntentResult(
+                intent="clarification_needed",
+                topic=None,
+                target_artifact=None,
+                confidence=1.0,
+                raw_text=message,
+                parameters=skill_match.parameters
+            )
+            
+            return [clarification_result]
         
         if skill_match and skill_match.confidence >= 0.8:
             # Skill Registry 成功匹配！
