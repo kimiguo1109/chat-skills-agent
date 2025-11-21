@@ -12,6 +12,8 @@ from typing import Dict, Any, List, Optional
 from datetime import datetime
 import json
 
+from app.core.artifact_storage import ArtifactStorage, generate_session_id
+
 logger = logging.getLogger(__name__)
 
 
@@ -39,6 +41,11 @@ class PlanSkillExecutor:
             "total": 0,
             "per_step": {}
         }
+        
+        # 🆕 Phase 2: Context Offloading 支持（条件初始化）
+        self.artifact_storage = None
+        self.offloading_enabled = False
+        self.current_session_id = None  # 当前执行的 session ID
     
     async def execute_plan(
         self,
@@ -59,6 +66,26 @@ class PlanSkillExecutor:
         Returns:
             聚合后的学习包
         """
+        # 🎚️ Phase 2: 检查是否启用 Context Offloading
+        cost_control = plan_config.get("cost_control", {})
+        self.offloading_enabled = cost_control.get("enable_artifact_offloading", False)
+        
+        if self.offloading_enabled:
+            # 初始化 ArtifactStorage 和 session ID
+            self.artifact_storage = ArtifactStorage()
+            self.current_session_id = generate_session_id()
+            
+            # 保存 Plan metadata
+            self.artifact_storage.save_plan_metadata(
+                self.current_session_id,
+                plan_config,
+                user_input
+            )
+            
+            logger.info(f"✅ [Offloading] Enabled (session: {self.current_session_id})")
+        else:
+            logger.debug("ℹ️  [Offloading] Disabled (using legacy context pruning)")
+        
         execution_plan = plan_config["execution_plan"]
         all_steps = execution_plan["steps"]
         
@@ -114,7 +141,8 @@ class PlanSkillExecutor:
                 # 3. 提取上下文（用于下游 steps）
                 extracted_context = self._extract_context(
                     result=result,
-                    extraction_config=step.get("context_extraction", {})
+                    extraction_config=step.get("context_extraction", {}),
+                    step_id=step_id  # 🆕 Phase 2: 传递 step_id 用于 offloading
                 )
                 
                 # 4. 存储结果
@@ -197,6 +225,26 @@ class PlanSkillExecutor:
         Yields:
             Dict: 流式事件 {"type": "plan_progress|thinking|content|step_done|done", ...}
         """
+        # 🎚️ Phase 2: 检查是否启用 Context Offloading
+        cost_control = plan_config.get("cost_control", {})
+        self.offloading_enabled = cost_control.get("enable_artifact_offloading", False)
+        
+        if self.offloading_enabled:
+            # 初始化 ArtifactStorage 和 session ID
+            self.artifact_storage = ArtifactStorage()
+            self.current_session_id = generate_session_id()
+            
+            # 保存 Plan metadata
+            self.artifact_storage.save_plan_metadata(
+                self.current_session_id,
+                plan_config,
+                user_input
+            )
+            
+            logger.info(f"✅ [Offloading] Enabled (session: {self.current_session_id})")
+        else:
+            logger.debug("ℹ️  [Offloading] Disabled (using legacy context pruning)")
+        
         execution_plan = plan_config["execution_plan"]
         all_steps = execution_plan["steps"]
         
@@ -293,7 +341,8 @@ class PlanSkillExecutor:
                         # 3. 提取上下文
                         extracted_context = self._extract_context(
                             result=result,
-                            extraction_config=step.get("context_extraction", {})
+                            extraction_config=step.get("context_extraction", {}),
+                            step_id=step_id  # 🆕 Phase 2: 传递 step_id 用于 offloading
                         )
                         step_contexts[step_id] = extracted_context
                         
@@ -628,10 +677,44 @@ class PlanSkillExecutor:
     def _extract_context(
         self,
         result: Dict[str, Any],
+        extraction_config: Dict[str, Any],
+        step_id: Optional[str] = None
+    ) -> Dict[str, Any]:
+        """
+        从 step 结果中提取上下文（路由器方法）
+        
+        Phase 2: 根据配置选择提取策略：
+        - offload + enabled: 使用文件卸载（_offload_to_file）
+        - 其他: 使用传统方式（_extract_context_legacy）
+        
+        Args:
+            result: Step 执行结果
+            extraction_config: 提取配置
+            step_id: Step 标识符（用于 offloading）
+        
+        Returns:
+            提取的上下文（可能是完整内容或 artifact 引用）
+        """
+        if not extraction_config:
+            return {}
+        
+        strategy = extraction_config.get("strategy", "key_points")
+        
+        # 🎚️ Phase 2: 检查是否启用 offloading
+        if strategy == "offload" and self.offloading_enabled:
+            # 🆕 新路径：文件卸载
+            return self._offload_to_file(result, extraction_config, step_id)
+        else:
+            # ✅ 原路径：传统方式（完全不变）
+            return self._extract_context_legacy(result, extraction_config)
+    
+    def _extract_context_legacy(
+        self,
+        result: Dict[str, Any],
         extraction_config: Dict[str, Any]
     ) -> Dict[str, Any]:
         """
-        从 step 结果中提取上下文
+        从 step 结果中提取上下文（传统方式，保留原有逻辑）
         
         实现上下文卸载（Context Pruning）：
         - 只提取关键信息
@@ -695,6 +778,71 @@ class PlanSkillExecutor:
         logger.debug(f"🔍 上下文提取: {strategy} | {len(extracted_str)} chars | ~{estimated_tokens} tokens")
         
         return extracted
+    
+    def _offload_to_file(
+        self,
+        result: Dict[str, Any],
+        extraction_config: Dict[str, Any],
+        step_id: str
+    ) -> Dict[str, Any]:
+        """
+        🆕 Phase 2: 将 step 结果卸载到文件系统（Context Offloading）
+        
+        核心优势：
+        - Token 节省 > 90%（引用 < 200 bytes vs 完整内容 2000+ bytes）
+        - 无信息损失（完整内容保存在文件中）
+        - 按需加载（_format_prompt 时才读取）
+        
+        Args:
+            result: Step 执行结果（完整内容）
+            extraction_config: 提取配置
+            step_id: Step 标识符
+        
+        Returns:
+            Artifact 引用（type="artifact_reference"）
+            
+        降级机制：
+            如果文件操作失败，自动回退到 _extract_context_legacy
+        """
+        try:
+            # 保存完整结果到文件
+            artifact_path = self.artifact_storage.save_step_result(
+                session_id=self.current_session_id,
+                step_id=step_id,
+                result=result,
+                metadata={
+                    "skill_id": extraction_config.get("skill_id"),
+                    "timestamp": datetime.now().isoformat()
+                }
+            )
+            
+            # 创建轻量级引用
+            fields = extraction_config.get("fields")
+            reference = self.artifact_storage.create_reference(
+                session_id=self.current_session_id,
+                step_id=step_id,
+                fields=fields
+            )
+            
+            # 统计效果
+            result_size = len(json.dumps(result, ensure_ascii=False))
+            reference_size = len(json.dumps(reference, ensure_ascii=False))
+            savings = 1 - (reference_size / result_size)
+            
+            logger.info(
+                f"💾 [Offloading] {step_id}: "
+                f"{result_size} bytes → {reference_size} bytes "
+                f"(节省 {savings*100:.1f}%)"
+            )
+            
+            return reference
+            
+        except Exception as e:
+            # 🛡️ 降级：回退到传统方式
+            logger.warning(
+                f"⚠️  Offloading failed for {step_id}, falling back to legacy: {e}"
+            )
+            return self._extract_context_legacy(result, extraction_config)
     
     def _aggregate_results(
         self,
