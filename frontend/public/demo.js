@@ -2408,17 +2408,50 @@ function startLearning(topic) {
 
 // 渲染澄清请求（Clarification）
 function renderClarificationCard(content) {
-    const { question, learned_topics, suggestion } = content;
+    const { 
+        question, 
+        reason, 
+        options = [], 
+        learned_topics,  // 兼容旧格式
+        suggestion, 
+        allow_custom_input = false,
+        custom_input_placeholder = "输入您的选择...",
+        original_intent,
+        confidence
+    } = content;
+    
+    // 🆕 支持两种格式：新的 options 和旧的 learned_topics
+    const displayOptions = options.length > 0 ? options : (learned_topics || []).map(item => ({
+        type: 'topic',
+        label: item.topic,
+        value: item.topic,
+        icon: item.type === 'explanation' ? '📖' : 
+              item.type === 'quiz_set' ? '✏️' : 
+              item.type === 'flashcard_set' ? '🎴' : '📝',
+        description: ''
+    }));
+    
+    // 根据原因选择背景色
+    const headerGradient = reason === 'low_confidence' 
+        ? 'from-amber-500 to-orange-500' 
+        : 'from-blue-500 to-purple-500';
+    
+    const headerIcon = reason === 'low_confidence' ? 'help_outline' : 'multiple_stop';
+    
+    // 生成唯一的输入框 ID
+    const customInputId = `clarification-custom-input-${Date.now()}`;
     
     let html = `
-        <div class="w-full max-w-2xl rounded-xl border border-border-light dark:border-border-dark bg-surface-light dark:bg-surface-dark shadow-sm overflow-hidden">
+        <div class="w-full max-w-2xl rounded-xl border border-border-light dark:border-border-dark bg-surface-light dark:bg-surface-dark shadow-lg overflow-hidden">
             <!-- Header -->
-            <div class="p-4 bg-gradient-to-r from-blue-500 to-purple-500">
+            <div class="p-4 bg-gradient-to-r ${headerGradient}">
                 <div class="flex items-center gap-3">
-                    <span class="material-symbols-outlined text-white text-3xl">help_outline</span>
+                    <span class="material-symbols-outlined text-white text-3xl">${headerIcon}</span>
                     <div>
                         <h3 class="text-xl font-bold text-white">需要您的选择</h3>
-                        <p class="text-sm text-blue-100">Please clarify your request</p>
+                        <p class="text-sm text-blue-100">
+                            ${reason === 'low_confidence' ? `置信度: ${(confidence * 100).toFixed(0)}%` : 'Multiple topics detected'}
+                        </p>
                     </div>
                 </div>
             </div>
@@ -2429,65 +2462,140 @@ function renderClarificationCard(content) {
                     ${question}
                 </p>
                 
-                <!-- Learned Topics -->
-                <div class="space-y-2">
-                    <p class="text-sm font-semibold text-slate-600 dark:text-slate-400 mb-3">📚 您最近学习过：</p>`;
+                <!-- Options -->
+                <div class="space-y-2">`;
     
-    learned_topics.forEach((item, idx) => {
-        const icon = item.type === 'explanation' ? '📖' : 
-                     item.type === 'quiz_set' ? '✏️' : 
-                     item.type === 'flashcard_set' ? '🎴' : '📝';
+    displayOptions.forEach((option, idx) => {
+        const { type, label, value, icon, description } = option;
+        
         html += `
                     <button 
-                        onclick="selectTopic('${item.topic.replace(/'/g, "\\'")}', '${content.intent || 'notes'}')"
-                        class="w-full text-left px-4 py-3 rounded-lg border border-slate-300 dark:border-slate-600 
-                               hover:border-primary hover:bg-blue-50 dark:hover:bg-blue-900/20 transition-all
-                               text-text-light-primary dark:text-text-dark-primary">
-                        <span class="mr-2">${icon}</span>
-                        <span class="font-medium">${item.topic}</span>
+                        onclick="handleClarificationOption('${type}', '${value.replace(/'/g, "\\'")}', '${original_intent || 'notes'}')"
+                        class="w-full text-left px-4 py-3 rounded-lg border-2 border-slate-300 dark:border-slate-600 
+                               hover:border-primary hover:bg-blue-50 dark:hover:bg-blue-900/20 hover:scale-[1.02] transition-all
+                               text-text-light-primary dark:text-text-dark-primary group">
+                        <div class="flex items-start gap-3">
+                            <span class="text-2xl flex-shrink-0">${icon}</span>
+                            <div class="flex-1">
+                                <span class="font-semibold text-base block">${label}</span>
+                                ${description ? `<span class="text-sm text-slate-600 dark:text-slate-400 block mt-1">${description}</span>` : ''}
+                            </div>
+                            <span class="material-symbols-outlined text-slate-400 group-hover:text-primary transition-colors">arrow_forward</span>
+                        </div>
                     </button>`;
     });
     
     html += `
-                </div>
-            </div>
-            
-            <!-- Suggestion -->
+                </div>`;
+    
+    // 自定义输入
+    if (allow_custom_input) {
+        html += `
+                <div class="mt-4 pt-4 border-t border-slate-200 dark:border-slate-700">
+                    <label class="text-sm font-medium text-slate-600 dark:text-slate-400 mb-2 block">
+                        或者输入自定义内容：
+                    </label>
+                    <div class="flex gap-2">
+                        <input 
+                            type="text" 
+                            id="${customInputId}"
+                            placeholder="${custom_input_placeholder}"
+                            class="flex-1 px-4 py-2 rounded-lg border border-slate-300 dark:border-slate-600 
+                                   bg-white dark:bg-slate-800 text-text-light-primary dark:text-text-dark-primary
+                                   focus:outline-none focus:ring-2 focus:ring-primary"
+                            onkeydown="if(event.key==='Enter') handleCustomInput('${customInputId}', '${original_intent || 'notes'}')">
+                        <button 
+                            onclick="handleCustomInput('${customInputId}', '${original_intent || 'notes'}')"
+                            class="px-4 py-2 bg-primary text-white rounded-lg hover:bg-primary-dark transition-colors font-medium">
+                            发送
+                        </button>
+                    </div>
+                </div>`;
+    }
+    
+    html += `
+            </div>`;
+    
+    // Suggestion
+    if (suggestion) {
+        html += `
             <div class="p-4 bg-slate-50 dark:bg-slate-800/50">
                 <p class="text-sm text-slate-600 dark:text-slate-400">
                     💡 ${suggestion}
                 </p>
-            </div>
+            </div>`;
+    }
+    
+    html += `
         </div>
     `;
     
     return html;
 }
 
-// 处理用户选择主题
-function selectTopic(topic, intent) {
-    console.log('🎯 User selected topic:', topic, 'for intent:', intent);
+// 🆕 处理澄清选项（支持 topic 和 intent 类型）
+function handleClarificationOption(optionType, value, originalIntent) {
+    console.log('🎯 User selected option:', { optionType, value, originalIntent });
     
-    // 根据intent构建消息（支持所有skills）
-    const intentMessages = {
-        'notes': `做${topic}的笔记`,
-        'quiz_request': `生成${topic}的题目`,
-        'flashcard_request': `生成${topic}的闪卡`,
-        'explain_request': `讲解${topic}`,
-        'mindmap': `生成${topic}的思维导图`,
-        'learning_bundle': `获取${topic}的学习资料`
-    };
+    let message = '';
     
-    const message = intentMessages[intent] || `学习${topic}`;
+    if (optionType === 'topic') {
+        // 用户选择了主题
+        const intentMessages = {
+            'notes': `做${value}的笔记`,
+            'quiz_request': `生成${value}的题目`,
+            'flashcard_request': `生成${value}的闪卡`,
+            'explain_request': `讲解${value}`,
+            'mindmap': `生成${value}的思维导图`,
+            'learning_bundle': `获取${value}的学习资料`
+        };
+        message = intentMessages[originalIntent] || `学习${value}`;
+    } else if (optionType === 'intent') {
+        // 用户选择了意图类型
+        const intentMessages = {
+            'explain_request': '请讲解一下',
+            'quiz_request': '给我出题',
+            'flashcard_request': '生成闪卡',
+            'notes': '做笔记',
+            'mindmap': '生成思维导图'
+        };
+        message = intentMessages[value] || value;
+    } else {
+        // 通用处理
+        message = value;
+    }
     
     // 设置消息到输入框并发送
     const input = document.getElementById('messageInput');
     input.value = message;
     
-    // 调用 handleSend 会自动：
-    // 1. 显示用户消息到聊天界面
-    // 2. 发送到后端
-    // 3. 显示 Agent 响应
+    // 触发发送
+    handleSend();
+}
+
+// 🆕 处理自定义输入
+function handleCustomInput(inputId, originalIntent) {
+    const input = document.getElementById(inputId);
+    const value = input.value.trim();
+    
+    if (!value) {
+        return;
+    }
+    
+    console.log('✏️ User entered custom input:', { value, originalIntent });
+    
+    // 直接使用用户输入
+    const messageInput = document.getElementById('messageInput');
+    messageInput.value = value;
+    
+    // 触发发送
+    handleSend();
+}
+
+// 处理用户选择主题（兼容旧代码）
+function selectTopic(topic, intent) {
+    handleClarificationOption('topic', topic, intent);
+}
     handleSend();
 }
 
@@ -2613,8 +2721,8 @@ function addAgentMessage(data) {
     } else if (data.content_type === 'onboarding') {
         // 🆕 首次访问引导
         contentHtml = renderOnboardingCard(data.response_content);
-    } else if (data.content_type === 'clarification') {
-        // 🆕 澄清请求：询问用户选择主题
+    } else if (data.content_type === 'clarification' || data.content_type === 'clarification_needed') {
+        // 🆕 澄清请求：询问用户选择主题或意图
         // ✅ 传递完整的 data，包含 intent 信息
         contentHtml = renderClarificationCard({
             ...data.response_content,

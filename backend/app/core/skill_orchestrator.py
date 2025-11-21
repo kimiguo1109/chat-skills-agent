@@ -387,9 +387,66 @@ class SkillOrchestrator:
         Returns:
             技能执行结果
         """
-        logger.info(f"🎯 Orchestrating: intent={intent_result.intent}, topic={intent_result.topic}")
+        logger.info(f"🎯 Orchestrating: intent={intent_result.intent}, topic={intent_result.topic}, confidence={intent_result.confidence:.2f}")
         
-        # ============= Phase 0: 检查是否需要澄清或引导（优先级最高）=============
+        # ============= Phase 0: 智能澄清机制（优先级最高）=============
+        
+        # 🆕 置信度过低：提供澄清选项
+        if intent_result.confidence < 0.60:  # 置信度 < 60%
+            logger.info(f"⚠️ Low confidence ({intent_result.confidence:.2f}), requesting clarification")
+            
+            session_context = await self.memory_manager.get_session_context(session_id)
+            recent_intents = session_context.recent_intents[-5:] if session_context and session_context.recent_intents else []
+            
+            # 构建意图选项
+            intent_options = []
+            intent_labels = {
+                "explain_request": {"label": "解释概念", "icon": "📖", "description": "详细讲解一个知识点"},
+                "quiz_request": {"label": "练习题目", "icon": "✍️", "description": "生成测试题"},
+                "flashcard_request": {"label": "记忆闪卡", "icon": "🗂️", "description": "生成记忆卡片"},
+                "notes": {"label": "学习笔记", "icon": "📝", "description": "生成结构化笔记"},
+                "mindmap": {"label": "思维导图", "icon": "🧠", "description": "生成知识导图"},
+            }
+            
+            # 优先显示最近使用的意图
+            for intent in recent_intents:
+                if intent in intent_labels and intent not in [opt["value"] for opt in intent_options]:
+                    info = intent_labels[intent]
+                    intent_options.append({
+                        "type": "intent",
+                        "label": info["label"],
+                        "value": intent,
+                        "icon": info["icon"],
+                        "description": info["description"]
+                    })
+            
+            # 补充其他常用意图
+            for intent, info in intent_labels.items():
+                if intent not in [opt["value"] for opt in intent_options]:
+                    intent_options.append({
+                        "type": "intent",
+                        "label": info["label"],
+                        "value": intent,
+                        "icon": info["icon"],
+                        "description": info["description"]
+                    })
+            
+            return {
+                "content_type": "clarification_needed",
+                "intent": "clarification",
+                "response_content": {
+                    "question": "抱歉，我不太确定您想要什么。请选择一个选项：",
+                    "reason": "low_confidence",
+                    "confidence": intent_result.confidence,
+                    "options": intent_options[:5],  # 最多5个选项
+                    "allow_custom_input": True,
+                    "custom_input_placeholder": "或者用其他方式描述您的需求...",
+                    "original_intent": intent_result.intent,
+                    "original_message": intent_result.raw_text
+                }
+            }
+        
+        # ============= Phase 0 继续: 主题相关澄清 =============
         
         # 🎯 澄清机制：对所有需要明确主题的skills，提供引导或澄清
         needs_clarification_intents = [
@@ -449,6 +506,37 @@ class SkillOrchestrator:
                         "call_to_action": "请先告诉我您想学习什么主题，例如：「讲讲牛顿第二定律」或「什么是光合作用」"
                     }
                 }
+            
+            # 🆕 置信度过低或多主题冲突：提供主动澄清
+            if not topic_is_valid and len(artifact_history) > 0:
+                # 提取最近的主题列表
+                recent_topics = await self._extract_recent_topics(session_id)
+                
+                # 如果有多个主题，提供澄清选项
+                if len(recent_topics) >= 2:
+                    logger.info(f"❓ Multiple topics detected, requesting clarification")
+                    
+                    return {
+                        "content_type": "clarification_needed",
+                        "intent": intent_result.intent,
+                        "response_content": {
+                            "question": "我注意到您之前学习了多个主题，请问您想基于哪个主题继续？",
+                            "reason": "topic_ambiguous",
+                            "options": [
+                                {
+                                    "type": "topic",
+                                    "label": topic,
+                                    "value": topic,
+                                    "icon": "📚"
+                                }
+                                for topic in recent_topics[:5]  # 最多5个选项
+                            ],
+                            "allow_custom_input": True,
+                            "custom_input_placeholder": "或者输入新的主题...",
+                            "original_intent": intent_result.intent,
+                            "original_message": intent_result.raw_text
+                        }
+                    }
             
             # 多主题澄清：只有当topic无效且有多个主题时才触发
             if not topic_is_valid and len(artifact_history) > 1:
@@ -1579,6 +1667,46 @@ Please respond with valid JSON according to the output schema defined above.
         
         except Exception as e:
             logger.warning(f"⚠️  Failed to update memory: {e}")
+    
+    async def _extract_recent_topics(self, session_id: str) -> List[str]:
+        """
+        从 session context 提取最近的主题列表
+        
+        Args:
+            session_id: 会话 ID
+        
+        Returns:
+            主题列表（去重，按最近顺序）
+        """
+        try:
+            session_context = await self.memory_manager.get_session_context(session_id)
+            
+            if not session_context or not session_context.artifact_history:
+                return []
+            
+            # 从 artifact_history 提取主题
+            topics = []
+            seen_topics = set()
+            
+            # 倒序遍历（最近的优先）
+            for artifact_id in reversed(session_context.artifact_history[-10:]):  # 最近10个
+                # artifact_id 格式: artifact_{type}_{topic}_{timestamp}
+                parts = artifact_id.split('_')
+                if len(parts) >= 3:
+                    # 提取 topic（可能包含多个部分）
+                    topic_parts = parts[2:-1]  # 排除 type 和 timestamp
+                    if topic_parts:
+                        topic = '_'.join(topic_parts)
+                        if topic and topic not in seen_topics and topic != "未知主题":
+                            topics.append(topic)
+                            seen_topics.add(topic)
+            
+            logger.info(f"📚 Extracted {len(topics)} recent topics: {topics}")
+            return topics
+            
+        except Exception as e:
+            logger.warning(f"⚠️ Failed to extract recent topics: {e}")
+            return []
     
     def _create_error_response(self, error_type: str, message: str) -> Dict[str, Any]:
         """
