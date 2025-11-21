@@ -1,0 +1,31 @@
+{
+  "session_id": "session_20251121_151302",
+  "user_id": "user_kimi",
+  "start_time": "2025-11-21T15:13:02.499480",
+  "last_updated": "2025-11-21T15:14:01.600822",
+  "status": "active",
+  "total_turns": 2,
+  "inherited_topic": null,
+  "last_topic": "二战 起因",
+  "topics": [
+    "二战 起因"
+  ],
+  "skills_used": {
+    "explanation": 1,
+    "flashcard_set": 1
+  },
+  "artifacts_generated": [
+    {
+      "turn": 1,
+      "type": "explanation",
+      "artifact_id": "",
+      "topic": "二战 起因"
+    },
+    {
+      "turn": 2,
+      "type": "flashcard_set",
+      "artifact_id": "",
+      "topic": "二战 起因"
+    }
+  ]
+}

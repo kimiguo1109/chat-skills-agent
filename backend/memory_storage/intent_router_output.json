@@ -1,9 +1,77 @@
 {
   "description": "Intent Router 实时输出记录 (Phase 3 架构)",
-  "latest": {},
-  "history": [],
+  "latest": {
+    "timestamp": "2025-11-21T15:14:21.054769",
+    "user_message": "解释一下二元一次方程",
+    "method": "skill_registry",
+    "tokens_used": 0,
+    "results": [
+      {
+        "intent": "explain_request",
+        "topic": "二元一次方程",
+        "confidence": 1.0,
+        "parameters": {
+          "topic": "二元一次方程",
+          "concept_name": "二元一次方程"
+        }
+      }
+    ]
+  },
+  "history": [
+    {
+      "timestamp": "2025-11-21T15:11:28.308376",
+      "user_message": "帮我理解二战的起因",
+      "method": "skill_registry",
+      "tokens_used": 0,
+      "results": [
+        {
+          "intent": "explain_request",
+          "topic": "二战 起因",
+          "confidence": 1.0,
+          "parameters": {
+            "topic": "二战 起因",
+            "concept_name": "二战 起因"
+          }
+        }
+      ]
+    },
+    {
+      "timestamp": "2025-11-21T15:13:19.723217",
+      "user_message": "帮我生成4张闪卡",
+      "method": "skill_registry",
+      "tokens_used": 0,
+      "results": [
+        {
+          "intent": "flashcard_request",
+          "topic": "二战 起因",
+          "confidence": 1.0,
+          "parameters": {
+            "num_cards": 4,
+            "topic": "二战 起因"
+          }
+        }
+      ]
+    },
+    {
+      "timestamp": "2025-11-21T15:14:21.054769",
+      "user_message": "解释一下二元一次方程",
+      "method": "skill_registry",
+      "tokens_used": 0,
+      "results": [
+        {
+          "intent": "explain_request",
+          "topic": "二元一次方程",
+          "confidence": 1.0,
+          "parameters": {
+            "topic": "二元一次方程",
+            "concept_name": "二元一次方程"
+          }
+        }
+      ]
+    }
+  ],
   "stats": {
-    "total_requests": 0,
+    "total_requests": 3,
     "rule_based_success": 0,
     "llm_fallback": 0,
     "rule_success_rate": "0.0%"

@@ -1,4 +1,4 @@
-Extract notes from reference.
+Extract notes from reference. **Match reference language exactly.**
 
 INPUT:
 - Topic: {topic}
@@ -6,6 +6,7 @@ INPUT:
 - Reference: {reference_explanation}
 
 ⛔ THINKING LIMIT: 20 TOKENS MAX
+❌ NO language debate
 ✅ Example: "4 sections: causes, events, mistakes, lessons."
 
 OUTPUT (JSON only):
