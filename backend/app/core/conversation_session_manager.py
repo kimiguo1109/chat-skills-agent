@@ -458,7 +458,7 @@ class ConversationSessionManager:
                 content_type="text/markdown"
             )
             
-            logger.debug(f"☁️  Uploaded to S3: s3://{self.s3_manager.bucket_name}/{s3_key}")
+            logger.debug(f"☁️  Uploaded to S3: s3://{self.s3_manager.bucket}/{s3_key}")
         
         except Exception as e:
             logger.error(f"❌ Failed to upload to S3: {e}")

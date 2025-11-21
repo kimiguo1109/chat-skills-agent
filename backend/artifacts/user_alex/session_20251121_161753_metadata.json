@@ -1,0 +1,24 @@
+{
+  "session_id": "session_20251121_161753",
+  "user_id": "user_alex",
+  "start_time": "2025-11-21T16:17:53.111488",
+  "last_updated": "2025-11-21T16:17:53.119394",
+  "status": "active",
+  "total_turns": 1,
+  "inherited_topic": null,
+  "last_topic": "二元一次方程",
+  "topics": [
+    "二元一次方程"
+  ],
+  "skills_used": {
+    "explanation": 1
+  },
+  "artifacts_generated": [
+    {
+      "turn": 1,
+      "type": "explanation",
+      "artifact_id": "",
+      "topic": "二元一次方程"
+    }
+  ]
+}
