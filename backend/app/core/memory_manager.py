@@ -17,6 +17,7 @@ from ..models.intent import MemorySummary
 from ..config import settings
 from .s3_storage import S3StorageManager
 from .artifact_storage import ArtifactStorage
+from .conversation_session_manager import ConversationSessionManager
 
 logger = logging.getLogger(__name__)
 
@@ -51,6 +52,9 @@ class MemoryManager:
             base_dir="artifacts",
             s3_manager=self.s3_manager
         )
+        
+        # 🆕 Conversation Session Managers (每个用户一个)
+        self._conversation_sessions: Dict[str, ConversationSessionManager] = {}
         
         logger.info(
             f"✅ MemoryManager initialized "
@@ -737,4 +741,32 @@ class MemoryManager:
             return f"Notes: {title}"
         else:
             return f"{artifact_type}"
+    
+    def get_conversation_session_manager(
+        self,
+        user_id: str
+    ) -> ConversationSessionManager:
+        """
+        获取或创建用户的 ConversationSessionManager
+        
+        Args:
+            user_id: 用户ID
+        
+        Returns:
+            ConversationSessionManager 实例
+        """
+        if user_id not in self._conversation_sessions:
+            # 创建新的 session manager
+            storage_path = self.artifact_storage.base_dir / user_id
+            storage_path.mkdir(parents=True, exist_ok=True)
+            
+            self._conversation_sessions[user_id] = ConversationSessionManager(
+                user_id=user_id,
+                storage_path=str(storage_path),
+                s3_manager=self.s3_manager
+            )
+            
+            logger.info(f"✅ Created ConversationSessionManager for {user_id}")
+        
+        return self._conversation_sessions[user_id]
 
