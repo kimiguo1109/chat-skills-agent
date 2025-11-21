@@ -112,8 +112,14 @@ async function selectUser(userId) {
     }
     
     // 清空聊天历史
-    const chatArea = document.getElementById('chatArea');
-    chatArea.innerHTML = '';
+    const chatMessages = document.getElementById('chatMessages');
+    if (chatMessages) {
+        // 找到聊天消息容器并清空
+        const messagesContainer = chatMessages.querySelector('.flex.flex-col.gap-6');
+        if (messagesContainer) {
+            messagesContainer.innerHTML = '';
+        }
+    }
     
     // 登录新用户
     await loginUser(userId);
@@ -148,7 +154,12 @@ async function initializeUser() {
 
 // 添加系统消息
 function addSystemMessage(message) {
-    const chatArea = document.getElementById('chatArea');
+    const chatMessages = document.getElementById('chatMessages');
+    if (!chatMessages) return;
+    
+    const messagesContainer = chatMessages.querySelector('.flex.flex-col.gap-6');
+    if (!messagesContainer) return;
+    
     const messageDiv = document.createElement('div');
     messageDiv.className = 'flex gap-4 items-start px-4 py-3 bg-primary/5 rounded-lg';
     messageDiv.innerHTML = `
@@ -156,8 +167,8 @@ function addSystemMessage(message) {
             <p class="text-sm">${message}</p>
         </div>
     `;
-    chatArea.appendChild(messageDiv);
-    chatArea.scrollTop = chatArea.scrollHeight;
+    messagesContainer.appendChild(messageDiv);
+    chatMessages.scrollTop = chatMessages.scrollHeight;
 }
 
 // 发送消息
