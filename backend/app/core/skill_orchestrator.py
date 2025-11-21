@@ -89,6 +89,73 @@ class SkillOrchestrator:
         try:
             logger.info(f"🌊 Stream orchestrating: intent={intent_result.intent}, topic={intent_result.topic}")
             
+            # ============= Phase -1: 处理 clarification_needed (流式版本) =============
+            
+            if intent_result.intent == "clarification_needed":
+                reason = intent_result.parameters.get('clarification_reason')
+                logger.warning(f"⚠️  Clarification needed: {reason}")
+                
+                # 获取session context
+                session_context = await self.memory_manager.get_session_context(session_id)
+                
+                if reason == "topic_missing":
+                    # Topic 缺失，需要用户提供
+                    recent_topics = []
+                    if session_context and session_context.topics:
+                        recent_topics = session_context.topics[-5:]  # 最近5个topics
+                    
+                    if recent_topics:
+                        # 有历史 topics，让用户选择
+                        yield {
+                            "type": "done",
+                            "content_type": "clarification_needed",
+                            "content": {
+                                "question": "您想基于以下哪个主题继续？",
+                                "reason": "topic_missing",
+                                "options": [
+                                    {
+                                        "type": "topic",
+                                        "label": topic,
+                                        "value": topic,
+                                        "icon": "📚",
+                                        "description": f"继续学习：{topic}"
+                                    }
+                                    for topic in recent_topics
+                                ],
+                                "allow_custom_input": True,
+                                "custom_input_placeholder": "或输入新的学习主题..."
+                            }
+                        }
+                    else:
+                        # 没有历史 topics，请求用户输入
+                        yield {
+                            "type": "done",
+                            "content_type": "clarification_needed",
+                            "content": {
+                                "question": "请问您想学习什么主题？",
+                                "reason": "topic_missing",
+                                "options": [],
+                                "allow_custom_input": True,
+                                "custom_input_placeholder": "例如：光合作用、二战历史、微积分..."
+                            }
+                        }
+                    return
+                
+                elif reason == "multi_topic_insufficient":
+                    # 用户请求多个 topics，但历史不足
+                    yield {
+                        "type": "done",
+                        "content_type": "clarification_needed",
+                        "content": {
+                            "question": "您提到了多个主题，但我暂时只记录了一个主题。可以告诉我具体是哪些主题吗？",
+                            "reason": "multi_topic_insufficient",
+                            "options": [],
+                            "allow_custom_input": True,
+                            "custom_input_placeholder": "例如：光合作用和二战历史"
+                        }
+                    }
+                    return
+            
             # Step 1: 选择技能
             skill = self._select_skill(intent_result)  # 🔧 修复：传递IntentResult对象
             if not skill:
