@@ -665,6 +665,11 @@ class SkillOrchestrator:
         """
         构建技能执行所需的上下文
         
+        包括：
+        1. 用户画像和会话上下文
+        2. 最近的 artifacts（用于上下文连续性）
+        3. Memory summary（行为总结）
+        
         Args:
             skill: Skill 定义
             user_id: 用户 ID
@@ -684,6 +689,28 @@ class SkillOrchestrator:
             context["user_profile"] = user_profile.model_dump()
             context["session_context"] = session_context.model_dump()
             context["memory_summary"] = memory_summary.recent_behavior
+            
+            # 🔥 加载最近的 artifacts（构建上下文连续性）
+            try:
+                recent_artifacts = []
+                if session_context.artifact_history:
+                    # 获取最近的 3 个 artifacts
+                    recent_artifact_ids = session_context.artifact_history[-3:]
+                    
+                    for artifact_id in recent_artifact_ids:
+                        artifact_content = await self.memory_manager.get_artifact(artifact_id)
+                        if artifact_content:
+                            recent_artifacts.append({
+                                "artifact_id": artifact_id,
+                                "content": artifact_content
+                            })
+                
+                context["recent_artifacts"] = recent_artifacts
+                logger.info(f"📚 Loaded {len(recent_artifacts)} recent artifacts for context")
+                
+            except Exception as e:
+                logger.warning(f"⚠️  Failed to load recent artifacts: {e}")
+                context["recent_artifacts"] = []
         
         # TODO: 如果需要 content_store，从知识库检索相关内容
         if skill.context.get("need_content_store", False):
@@ -1457,6 +1484,11 @@ Please respond with valid JSON according to the output schema defined above.
         """
         更新用户记忆（异步，不阻塞主流程）
         
+        包括：
+        1. 保存 artifact 到 S3（构建用户画像）
+        2. 更新 session context（当前主题、意图历史）
+        3. 维护 artifact_history 引用链
+        
         Args:
             user_id: 用户 ID
             session_id: 会话 ID
@@ -1470,11 +1502,16 @@ Please respond with valid JSON according to the output schema defined above.
             # 🆕 更新当前主题（只有当有明确主题时）
             #     简单策略：如果 topic 不为 None 且长度>=3，就认为是明确主题
             #     无需硬编码的 invalid_topics 列表，让规则引擎/LLM 决定
-            if intent_result.topic and len(intent_result.topic) >= 3:
-                session_context.current_topic = intent_result.topic
-                logger.info(f"✅ Updated current_topic to: {intent_result.topic}")
-            elif intent_result.topic:
-                logger.info(f"⏭️  Topic too short ({len(intent_result.topic)} chars), keeping current_topic: {session_context.current_topic}")
+            topic = intent_result.topic
+            if topic and len(topic) >= 3:
+                session_context.current_topic = topic
+                logger.info(f"✅ Updated current_topic to: {topic}")
+            elif topic:
+                logger.info(f"⏭️  Topic too short ({len(topic)} chars), keeping current_topic: {session_context.current_topic}")
+                # 使用 current_topic 作为 fallback
+                topic = session_context.current_topic
+            else:
+                topic = session_context.current_topic or "未知主题"
             
             # 添加意图到历史
             intent = intent_result.intent
@@ -1488,6 +1525,53 @@ Please respond with valid JSON according to the output schema defined above.
             # 保持最近10个
             if len(session_context.recent_intents) > 10:
                 session_context.recent_intents = session_context.recent_intents[-10:]
+            
+            # 🔥 核心：保存 artifact 到 S3，构建用户画像
+            try:
+                # 确定 artifact 类型
+                artifact_type_mapping = {
+                    "quiz_request": "quiz_set",
+                    "flashcard_request": "flashcard_set",
+                    "explain_request": "explanation",
+                    "notes": "notes",
+                    "mindmap": "mindmap",
+                    "learning_bundle": "learning_bundle"
+                }
+                
+                artifact_type = artifact_type_mapping.get(intent, intent)
+                
+                # 移除内部字段
+                artifact_content = {k: v for k, v in skill_result.items() if not k.startswith('_')}
+                
+                # 保存到 S3
+                artifact_record = await self.memory_manager.save_artifact(
+                    session_id=session_id,
+                    artifact=artifact_content,
+                    artifact_type=artifact_type,
+                    topic=topic,
+                    user_id=user_id
+                )
+                
+                logger.info(f"✅ Artifact saved: {artifact_record.artifact_id} (Storage: {artifact_record.storage_type})")
+                
+                # 更新 session context 的 artifact_history
+                if not session_context.artifact_history:
+                    session_context.artifact_history = []
+                
+                session_context.artifact_history.append(artifact_record.artifact_id)
+                
+                # 保持最近20个 artifacts
+                if len(session_context.artifact_history) > 20:
+                    session_context.artifact_history = session_context.artifact_history[-20:]
+                
+                # 更新 last_artifact_id
+                session_context.last_artifact_id = artifact_record.artifact_id
+                
+                logger.info(f"📝 Artifact history updated: {len(session_context.artifact_history)} artifacts")
+                
+            except Exception as e:
+                logger.error(f"❌ Failed to save artifact: {e}")
+                # 不中断流程，继续更新 session context
             
             await self.memory_manager.update_session_context(session_id, session_context)
             

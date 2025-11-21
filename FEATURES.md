@@ -1772,12 +1772,61 @@ aws s3 ls s3://skill-agent-demo/artifacts/user_kimi/ --recursive
 aws s3 ls s3://skill-agent-demo/artifacts/user_alex/ --recursive
 ```
 
-### 5.5 用户画像应用场景
+### 5.5 上下文连续性管理 ✨ NEW
+
+**工作流程**：
+```
+1. 用户发送消息
+   ↓
+2. 加载 Session Context
+   - 获取最近 3 个 artifacts
+   - 加载 user profile
+   - 生成 memory summary
+   ↓
+3. 构建 Skill Context
+   - 包含历史对话
+   - 包含相关 artifacts
+   - 包含用户偏好
+   ↓
+4. 执行 Skill 生成内容
+   ↓
+5. 保存 Artifact 到 S3
+   - 自动存储（全量）
+   - 更新 artifact_history
+   - 维护引用链
+   ↓
+6. 更新 Session Context
+   - 保存最近 20 个 artifact IDs
+   - 更新 current_topic
+   - 记录 recent_intents
+```
+
+**上下文卸载策略**：
+- **Recent Artifacts**：最近 3 个 artifacts 加载到内存
+- **History Reference**：保留最近 20 个 artifact IDs
+- **S3 Full Storage**：所有 artifacts 完整存储在 S3
+- **按需加载**：需要时从 S3 加载历史 artifacts
+
+**应用示例**：
+```
+用户：解释量子纠缠
+AI：生成详细解释 → 保存到 S3
+
+用户：给我5张闪卡
+AI：加载"量子纠缠"解释 → 基于内容生成闪卡
+
+用户：再来5道测试题
+AI：加载解释+闪卡 → 生成相关测试题
+```
+
+### 5.6 用户画像应用场景
 
 **当前实现**：
 - ✅ 基于会话的上下文管理
 - ✅ 用户独立的 S3 存储路径
 - ✅ Artifact 引用而非内容存储
+- ✅ 最近 artifacts 自动加载
+- ✅ 上下文连续性保证
 
 **未来扩展**：
 - 📊 学习模式分析（主题偏好、难度适配）
