@@ -611,7 +611,7 @@ async def web_chat_stream(
         logger.info(f"   • User: {request.user_id}")
         logger.info(f"   • Session: {session_id}")
         logger.info(f"   • Action: {request.action}")
-        logger.info(f"   • QID/Resource ID: {effective_qid or 'N/A'}")
+        logger.info(f"   • QID/Resource ID: {effective_qid_for_context or 'N/A'}")
         logger.info("="*60)
         
         # 🆕 环境标识

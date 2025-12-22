@@ -5,7 +5,7 @@
 
 set -e
 
-PROJECT_DIR="/root/usr/skill_agent_demo"
+PROJECT_DIR="/usr/project/skill-agent"
 BACKEND_DIR="$PROJECT_DIR/backend"
 FRONTEND_DIR="$PROJECT_DIR/frontend"
 
@@ -52,14 +52,14 @@ if [ -f "$PROJECT_DIR/logs/backend.pid" ]; then
     fi
 fi
 
-# 强制杀死占用8088端口的进程
-echo "检查端口8088占用情况..."
-fuser -k 8088/tcp 2>/dev/null || true
+# 强制杀死占用28011端口的进程
+echo "检查端口28011占用情况..."
+fuser -k 28011/tcp 2>/dev/null || true
 sleep 1
 
 # 启动后端
-echo "启动后端服务 (端口 8088)..."
-nohup python -m uvicorn app.main:app --host 0.0.0.0 --port 8088 \
+echo "启动后端服务 (端口 28011)..."
+nohup python -m uvicorn app.main:app --host 0.0.0.0 --port 28011 \
     > "$PROJECT_DIR/logs/backend.log" 2>&1 &
 BACKEND_PID=$!
 echo $BACKEND_PID > "$PROJECT_DIR/logs/backend.pid"
@@ -92,8 +92,8 @@ if [ -f "$PROJECT_DIR/logs/frontend.pid" ]; then
 fi
 
 # 启动前端
-echo "启动前端服务 (端口 3100)..."
-nohup npx vite --host 0.0.0.0 --port 3100 \
+echo "启动前端服务 (端口 28010)..."
+nohup npx vite --host 0.0.0.0 --port 28010 \
     > "$PROJECT_DIR/logs/frontend.log" 2>&1 &
 FRONTEND_PID=$!
 echo $FRONTEND_PID > "$PROJECT_DIR/logs/frontend.pid"
@@ -107,9 +107,9 @@ echo "✓ 所有服务已启动完成!"
 echo "=========================================="
 echo ""
 echo "服务信息:"
-echo "  后端 API: http://localhost:8088"
-echo "  API 文档: http://localhost:8088/docs"
-echo "  前端界面: http://localhost:3100"
+echo "  后端 API: http://35.83.184.237:28011"
+echo "  API 文档: http://35.83.184.237:28011/docs"
+echo "  前端界面: http://35.83.184.237:28010"
 echo ""
 echo "进程 ID:"
 echo "  后端 PID: $BACKEND_PID"

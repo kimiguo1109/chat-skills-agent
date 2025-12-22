@@ -11,20 +11,20 @@
 bash start_services.sh
 
 # 或手动启动
-cd backend && uvicorn app.main:app --host 0.0.0.0 --port 8088 --reload
-cd frontend && npm start
+cd backend && uvicorn app.main:app --host 0.0.0.0 --port 28011 --reload
+cd frontend && npm run dev -- --host 0.0.0.0 --port 28010
 ```
 
 ### 测试接口
 
 ```bash
-# 基础功能测试
-cd backend/scripts
-python test_part1_basic_features.py
+# App API 完整测试 (61轮)
+bash test_app.sh
 
-# 上下文卸载效果演示（带可视化）
-python test_context_offloading_demo.py
+# Web API 完整测试 (30轮, SSE 流式)
+bash test_web.sh
 ```
+
 
 ## 🎯 核心功能
 
@@ -109,11 +109,15 @@ skill_agent_demo/
 
 ## 🔧 配置
 
-创建 `.env` 文件：
+创建 `backend/.env` 文件：
 
 ```bash
-# LLM 配置
-NOVITA_API_KEY=your_novita_api_key
+# Gemini API 配置 (主要 LLM)
+GEMINI_API_KEY=your_gemini_api_key
+GEMINI_MODEL=gemini-2.5-flash
+
+# Kimi API 配置 (可选，通过 Novita AI)
+KIMI_API_KEY=your_novita_api_key
 KIMI_MODEL=moonshotai/kimi-k2-thinking
 
 # S3 配置
@@ -126,37 +130,30 @@ AWS_REGION=us-east-1
 
 ## 🧪 测试场景
 
-### Part 1: 基础功能
+### App API 测试 (推荐)
 ```bash
-python backend/scripts/test_part1_basic_features.py
+bash test_app.sh
 ```
 
-测试内容：
-- ✅ 意图识别准确性
-- ✅ 混合意图处理
-- ✅ 技能执行质量
-- ✅ Quiz 和 Flashcard 生成
+测试覆盖 (61轮连续对话)：
+- ✅ 随机对话 → Intent: other
+- ✅ 技能识别 → Quiz/Flashcard/Explain + 0-token
+- ✅ Plan Skill → 多技能组合
+- ✅ 上下文管理 → 历史关联 + 回溯检索
+- ✅ 文件上传 → 图片/文档/多文件对比
+- ✅ 引用文本 → referenced_text + action_type
+- ✅ 反馈 API → like/dislike/report
 
-### 上下文卸载演示（推荐！）
+### Web API 测试 (SSE 流式)
 ```bash
-python backend/scripts/test_context_offloading_demo.py
+bash test_web.sh
 ```
 
-可视化展示：
-- 🎨 彩色进度条显示 Context Window 使用率
-- 📊 实时 token 对比和节省计算
-- 💰 成本节省估算
-- ✅ 三大支柱验证报告
-
-输出示例：
-```
-┌──────────────────────────────────────┐
-│ Turn 2: 加载 compressed summary      │
-│ Token: 7,625 (Context: +2,370)       │
-│ 节省: ~1,630 tokens (40%)            │
-│ Context Window: ████████░░░░ 7.6%    │
-└──────────────────────────────────────┘
-```
+测试覆盖 (30轮)：
+- ✅ SSE 流式输出
+- ✅ Edit/Regenerate 功能
+- ✅ 版本历史 + 树结构
+- ✅ Clear Session
 
 ## 📊 性能指标
 
@@ -171,17 +168,22 @@ python backend/scripts/test_context_offloading_demo.py
 
 ## 🔗 相关文档
 
-- [FEATURES.md](./FEATURES.md) - 详细功能说明和架构文档
-- [BUG_FIXES.md](./BUG_FIXES.md) - 已知问题和修复记录
+- [ARCHITECTURE.md](./ARCHITECTURE.md) - 系统架构详解 (Context Engineering, Thinking Mode, Plan Skill)
+- [CHANGELOG.md](./CHANGELOG.md) - 完整更新日志
 
 ## 📝 开发日志
 
-**最新更新 (2025-11-24)**:
+**最新更新 (2024-12-22)**:
+- ✅ 切换主 LLM 为 Gemini 2.5 Flash
+- ✅ 新增 test_app.sh / test_web.sh 完整测试脚本
+- ✅ 支持 SSE 流式输出 (Web API)
+- ✅ 支持 Edit/Regenerate 消息功能
+- ✅ 支持文件上传 (GCS 图片/文档)
+
+**历史更新 (2024-11-24)**:
 - ✅ 实现 Context Engineering 三大支柱
 - ✅ 优化所有 Skill Prompts (-78% tokens)
-- ✅ 修复 Intent Router LLM fallback 问题
-- ✅ 修复 Quiz 显示 N/A 问题
-- ✅ 增强测试脚本（可视化输出）
+- ✅ 智能思考模式选择 (真思考 vs 伪思考)
 
 ## 🤝 贡献
 
