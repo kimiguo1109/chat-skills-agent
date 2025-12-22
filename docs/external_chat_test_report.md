@@ -1,7 +1,8 @@
 # App Chat API 前端对接文档
 
-> 更新日期: 2025-12-18  
-> 服务地址: `http://13.52.175.51:8088`
+> 更新日期: 2025-12-22  
+> 服务地址: `https://chatapp.studyx.ai`  
+> 内部地址: `http://35.83.184.237:28011`
 
 ---
 
@@ -20,7 +21,7 @@
 ### 请求
 
 ```bash
-curl -X POST "http://13.52.175.51:8088/api/external/chat" \
+curl -X POST "https://chatapp.studyx.ai/api/external/chat" \
   -H "Content-Type: application/json" \
   -H "token: 用户登录token" \
   -d '{
@@ -77,7 +78,7 @@ curl -X POST "http://13.52.175.51:8088/api/external/chat" \
 ### 引用文本
 
 ```bash
-curl -X POST "http://13.52.175.51:8088/api/external/chat" \
+curl -X POST "https://chatapp.studyx.ai/api/external/chat" \
   -H "Content-Type: application/json" \
   -d '{
     "message": "这一步我不太明白",
@@ -91,7 +92,7 @@ curl -X POST "http://13.52.175.51:8088/api/external/chat" \
 ### 快捷按钮
 
 ```bash
-curl -X POST "http://13.52.175.51:8088/api/external/chat" \
+curl -X POST "https://chatapp.studyx.ai/api/external/chat" \
   -H "Content-Type: application/json" \
   -d '{
     "message": "",
@@ -115,7 +116,7 @@ curl -X POST "http://13.52.175.51:8088/api/external/chat" \
 ### 单图片
 
 ```bash
-curl -X POST "http://13.52.175.51:8088/api/external/chat" \
+curl -X POST "https://chatapp.studyx.ai/api/external/chat" \
   -H "Content-Type: application/json" \
   -d '{
     "message": "这张图片是什么",
@@ -130,7 +131,7 @@ curl -X POST "http://13.52.175.51:8088/api/external/chat" \
 ### 单文档
 
 ```bash
-curl -X POST "http://13.52.175.51:8088/api/external/chat" \
+curl -X POST "https://chatapp.studyx.ai/api/external/chat" \
   -H "Content-Type: application/json" \
   -d '{
     "message": "这个文档讲了什么",
@@ -145,7 +146,7 @@ curl -X POST "http://13.52.175.51:8088/api/external/chat" \
 ### 多文件
 
 ```bash
-curl -X POST "http://13.52.175.51:8088/api/external/chat" \
+curl -X POST "https://chatapp.studyx.ai/api/external/chat" \
   -H "Content-Type: application/json" \
   -d '{
     "message": "比较这两个文档",
@@ -167,7 +168,7 @@ curl -X POST "http://13.52.175.51:8088/api/external/chat" \
 ### 请求
 
 ```bash
-curl "http://13.52.175.51:8088/api/external/chat/history?aiQuestionId=Q12345&answerId=A67890"
+curl "https://chatapp.studyx.ai/api/external/chat/history?aiQuestionId=Q12345&answerId=A67890"
 ```
 
 ### 返回
@@ -202,7 +203,7 @@ curl "http://13.52.175.51:8088/api/external/chat/history?aiQuestionId=Q12345&ans
 ### 请求
 
 ```bash
-curl -X POST "http://13.52.175.51:8088/api/chat/feedback" \
+curl -X POST "https://chatapp.studyx.ai/api/chat/feedback" \
   -H "Content-Type: application/json" \
   -d '{
     "user_id": "367102",
@@ -223,7 +224,7 @@ curl -X POST "http://13.52.175.51:8088/api/chat/feedback" \
 ### 报告问题
 
 ```bash
-curl -X POST "http://13.52.175.51:8088/api/chat/feedback" \
+curl -X POST "https://chatapp.studyx.ai/api/chat/feedback" \
   -H "Content-Type: application/json" \
   -d '{
     "user_id": "367102",

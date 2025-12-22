@@ -1,7 +1,8 @@
 # Web Chat API 前端对接文档
 
-> 更新日期: 2025-12-18  
-> 服务地址: `http://13.52.175.51:8088`
+> 更新日期: 2025-12-22  
+> 服务地址: `https://chatweb.studyx.ai`  
+> 内部地址: `http://35.83.184.237:28011`
 
 ---
 
@@ -23,7 +24,7 @@
 ### 请求
 
 ```bash
-curl -N -X POST "http://13.52.175.51:8088/api/external/chat/web" \
+curl -N -X POST "https://chatweb.studyx.ai/api/external/chat/web" \
   -H "Content-Type: application/json" \
   -H "token: 用户登录token" \
   -d '{
@@ -101,7 +102,7 @@ data: {"type": "done", "turn_id": 5, "intent": "other", "full_response": "量子
 ### 请求
 
 ```bash
-curl -N -X POST "http://13.52.175.51:8088/api/external/chat/web" \
+curl -N -X POST "https://chatweb.studyx.ai/api/external/chat/web" \
   -H "Content-Type: application/json" \
   -H "token: 用户登录token" \
   -d '{
@@ -127,7 +128,7 @@ curl -N -X POST "http://13.52.175.51:8088/api/external/chat/web" \
 ### 请求
 
 ```bash
-curl -N -X POST "http://13.52.175.51:8088/api/external/chat/web" \
+curl -N -X POST "https://chatweb.studyx.ai/api/external/chat/web" \
   -H "Content-Type: application/json" \
   -H "token: 用户登录token" \
   -d '{
@@ -153,7 +154,7 @@ curl -N -X POST "http://13.52.175.51:8088/api/external/chat/web" \
 ### 引用文本
 
 ```bash
-curl -N -X POST "http://13.52.175.51:8088/api/external/chat/web" \
+curl -N -X POST "https://chatweb.studyx.ai/api/external/chat/web" \
   -H "Content-Type: application/json" \
   -d '{
     "message": "这一步我不太明白",
@@ -168,7 +169,7 @@ curl -N -X POST "http://13.52.175.51:8088/api/external/chat/web" \
 ### 快捷按钮
 
 ```bash
-curl -N -X POST "http://13.52.175.51:8088/api/external/chat/web" \
+curl -N -X POST "https://chatweb.studyx.ai/api/external/chat/web" \
   -H "Content-Type: application/json" \
   -H "token: 用户登录token" \
   -d '{
@@ -204,7 +205,7 @@ gs://studyx_test/temp/xxx.jpg → https://files.istudyx.com/temp/xxx.jpg
 ### 单图片
 
 ```bash
-curl -N -X POST "http://13.52.175.51:8088/api/external/chat/web" \
+curl -N -X POST "https://chatweb.studyx.ai/api/external/chat/web" \
   -H "Content-Type: application/json" \
   -H "token: 用户登录token" \
   -d '{
@@ -221,7 +222,7 @@ curl -N -X POST "http://13.52.175.51:8088/api/external/chat/web" \
 ### 单文档
 
 ```bash
-curl -N -X POST "http://13.52.175.51:8088/api/external/chat/web" \
+curl -N -X POST "https://chatweb.studyx.ai/api/external/chat/web" \
   -H "Content-Type: application/json" \
   -H "token: 用户登录token" \
   -d '{
@@ -238,7 +239,7 @@ curl -N -X POST "http://13.52.175.51:8088/api/external/chat/web" \
 ### 多文件
 
 ```bash
-curl -N -X POST "http://13.52.175.51:8088/api/external/chat/web" \
+curl -N -X POST "https://chatweb.studyx.ai/api/external/chat/web" \
   -H "Content-Type: application/json" \
   -H "token: 用户登录token" \
   -d '{
@@ -258,7 +259,7 @@ curl -N -X POST "http://13.52.175.51:8088/api/external/chat/web" \
 ### 纯文件上传（无文字消息）
 
 ```bash
-curl -N -X POST "http://13.52.175.51:8088/api/external/chat/web" \
+curl -N -X POST "https://chatweb.studyx.ai/api/external/chat/web" \
   -H "Content-Type: application/json" \
   -H "token: 用户登录token" \
   -d '{
@@ -281,7 +282,7 @@ curl -N -X POST "http://13.52.175.51:8088/api/external/chat/web" \
 ### 请求
 
 ```bash
-curl "http://13.52.175.51:8088/api/external/chat/web/sessions?user_id=367102&page=1&limit=20"
+curl "https://chatweb.studyx.ai/api/external/chat/web/sessions?user_id=367102&page=1&limit=20"
 ```
 
 ### 参数
@@ -326,7 +327,7 @@ curl "http://13.52.175.51:8088/api/external/chat/web/sessions?user_id=367102&pag
 ### 请求
 
 ```bash
-curl "http://13.52.175.51:8088/api/external/chat/web/history?aiQuestionId=20000003084&answerId=7041"
+curl "https://chatweb.studyx.ai/api/external/chat/web/history?aiQuestionId=20000003084&answerId=7041"
 ```
 
 ### 参数
@@ -370,7 +371,7 @@ curl "http://13.52.175.51:8088/api/external/chat/web/history?aiQuestionId=200000
 ### 请求
 
 ```bash
-curl -X POST "http://13.52.175.51:8088/api/external/chat/web/clear" \
+curl -X POST "https://chatweb.studyx.ai/api/external/chat/web/clear" \
   -H "Content-Type: application/json" \
   -d '{
     "user_id": "367102",
@@ -401,7 +402,7 @@ curl -X POST "http://13.52.175.51:8088/api/external/chat/web/clear" \
 ### 请求
 
 ```bash
-curl "http://13.52.175.51:8088/api/external/chat/web/versions?user_id=367102&question_id=Q12345&answer_id=A67890"
+curl "https://chatweb.studyx.ai/api/external/chat/web/versions?user_id=367102&question_id=Q12345&answer_id=A67890"
 ```
 
 ### 返回
@@ -431,7 +432,7 @@ curl "http://13.52.175.51:8088/api/external/chat/web/versions?user_id=367102&que
 ### 请求
 
 ```bash
-curl "http://13.52.175.51:8088/api/external/chat/web/status?user_id=367102&question_id=Q12345&answer_id=A67890"
+curl "https://chatweb.studyx.ai/api/external/chat/web/status?user_id=367102&question_id=Q12345&answer_id=A67890"
 ```
 
 ### 返回

@@ -5,14 +5,16 @@ import react from '@vitejs/plugin-react'
 export default defineConfig({
   plugins: [react()],
   server: {
-    port: 3100,  // 修改为 3100 端口
+    port: 28010,
+    host: '0.0.0.0',
+    allowedHosts: ['chatweb.studyx.ai', 'chatapp.studyx.ai', 'localhost', '127.0.0.1', '35.83.184.237'],
     proxy: {
       '/api': {
-        target: 'http://localhost:8088',
+        target: 'http://localhost:28011',
         changeOrigin: true,
       },
       '/auth': {
-        target: 'http://localhost:8088',
+        target: 'http://localhost:28011',
         changeOrigin: true,
       },
     },
