@@ -17,10 +17,15 @@ yarn-debug.log*
 yarn-error.log*
 .pnpm-debug.log*
 
-# Environment
+# Environment (保护测试/生产环境配置不被覆盖)
 .env
 .env.local
 .env.*.local
+.env.production
+.env.staging
+backend/.env
+backend/.env.*
+!backend/.env.example
 
 # IDE
 .vscode/
@@ -66,3 +71,13 @@ logs/
 
 # Test files
 test_*.sh
+
+# Service scripts (环境相关)
+start_services.sh
+stop_services.sh
+status_services.sh
+configure_public_access.sh
+
+# PID files
+*.pid
+logs/*.pid

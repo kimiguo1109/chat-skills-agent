@@ -373,10 +373,11 @@ class GeminiClient:
                 usage_stats = {}
                 
                 if usage_metadata:
-                    input_tokens = getattr(usage_metadata, 'prompt_token_count', 0)
-                    output_tokens = getattr(usage_metadata, 'candidates_token_count', 0)
-                    total_tokens = getattr(usage_metadata, 'total_token_count', 0)
-                    thoughts_tokens = getattr(usage_metadata, 'thoughts_token_count', 0)  # 🆕 思考 tokens
+                    # 🔧 使用 `or 0` 确保值不为 None（API 有时返回 None 而非 0）
+                    input_tokens = getattr(usage_metadata, 'prompt_token_count', 0) or 0
+                    output_tokens = getattr(usage_metadata, 'candidates_token_count', 0) or 0
+                    total_tokens = getattr(usage_metadata, 'total_token_count', 0) or 0
+                    thoughts_tokens = getattr(usage_metadata, 'thoughts_token_count', 0) or 0  # 🆕 思考 tokens
                     
                     usage_stats = {
                         "input_tokens": input_tokens,
