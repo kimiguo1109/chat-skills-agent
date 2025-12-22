@@ -125,7 +125,8 @@ class PlanSkillExecutor:
                 step_input = self._build_step_input(
                     step=step,
                     user_input=user_input,
-                    step_contexts=step_contexts
+                    step_contexts=step_contexts,
+                    session_context=session_context  # 🆕 传入 session_context
                 )
                 logger.info(f"✅ 输入参数构建完成")
                 
@@ -314,7 +315,8 @@ class PlanSkillExecutor:
                 step_input = self._build_step_input(
                     step=step,
                     user_input=user_input,
-                    step_contexts=step_contexts
+                    step_contexts=step_contexts,
+                    session_context=session_context  # 🆕 传入 session_context
                 )
                 logger.info(f"✅ 输入参数构建完成")
                 
@@ -510,7 +512,10 @@ class PlanSkillExecutor:
             if comp_type == 'explanation':
                 components_summary.append('概念讲解')
             elif comp_type == 'flashcard_set':
-                card_count = len(comp.get('content', {}).get('cards', []))
+                # 兼容新旧格式：cardList (新) 或 cards (旧)
+                content = comp.get('content', {})
+                cards = content.get('cardList') or content.get('cards', [])
+                card_count = len(cards)
                 components_summary.append(f'{card_count}张抽认卡')
             elif comp_type == 'quiz_set':
                 quiz_count = len(comp.get('content', {}).get('questions', []))
@@ -550,12 +555,17 @@ class PlanSkillExecutor:
         Yields:
             Dict: 流式事件
         """
-        # 调用 SkillOrchestrator 的流式执行方法
+        # 🆕 传递步骤索引，用于智能选择 thinking 模式
+        # - 第一步 (explain) → 真思考 (Kimi)，深度理解核心概念
+        # - 后续步骤 (flashcard/quiz/notes/mindmap) → 伪思考 (Gemini)，基于已有内容快速生成
+        step_order = step_info.get("step_order", 1)
+        
         async for chunk in self.skill_orchestrator._execute_single_skill_stream(
             skill_id=skill_id,
             input_params=input_params,
             user_profile=user_profile,
-            session_context=session_context
+            session_context=session_context,
+            step_index=step_order  # 🆕 传递步骤索引
         ):
             # 转发所有chunks
             yield chunk
@@ -564,7 +574,8 @@ class PlanSkillExecutor:
         self,
         step: Dict[str, Any],
         user_input: Dict[str, Any],
-        step_contexts: Dict[str, Any]
+        step_contexts: Dict[str, Any],
+        session_context: Optional[Any] = None
     ) -> Dict[str, Any]:
         """
         构建 step 的输入参数
@@ -572,11 +583,13 @@ class PlanSkillExecutor:
         支持模板变量：
         - {input.field}: 从用户输入提取
         - {context.step_id.field}: 从上游 step 上下文提取
+        - 自动从 session_context 查找缺失的依赖
         
         Args:
             step: Step 配置
             user_input: 用户输入
             step_contexts: 已执行 steps 的上下文
+            session_context: 会话上下文 (用于查找 fallback artifacts)
         
         Returns:
             Step 输入参数字典
@@ -621,24 +634,66 @@ class PlanSkillExecutor:
                             logger.warning(f"⚠️  Field '{field_expr}' not found in user_input and no default value provided")
                 
                 elif value_template.startswith("{context."):
-                    # 从上游 step 上下文提取: {context.explain.key_terms}
+                    # 从上游 step 上下文提取
+                    # 支持三种模式：
+                    # 1. {context.explain.key_terms} - 明确指定 step
+                    # 2. {context.previous} - 前一个 step 的完整上下文
+                    # 3. {context.previous.summary} - 前一个 step 的 summary
                     parts = value_template[9:-1].split(".", 1)
                     step_id = parts[0]
                     field_path = parts[1] if len(parts) > 1 else None
                     
-                    if step_id in step_contexts:
+                    # 🆕 支持 {context.previous} - 自动获取前一个 step
+                    if step_id == "previous":
+                        # 获取当前已执行的最后一个 step
+                        if step_contexts:
+                            prev_step_id = list(step_contexts.keys())[-1]
+                            prev_context = step_contexts[prev_step_id]
+                            
+                            if field_path:
+                                # 提取特定字段（如 summary）
+                                step_input[key] = self._get_nested_value(prev_context, field_path)
+                                logger.info(f"📦 传递上下文: {key} <- previous({prev_step_id}).{field_path}")
+                            else:
+                                # 传递完整上下文（压缩版summary）
+                                # 🎯 自动压缩前一步的输出为 summary
+                                summary = self._create_context_summary(prev_context, prev_step_id)
+                                step_input[key] = summary
+                                logger.info(f"📦 传递上下文: {key} <- previous({prev_step_id}) [summary: {len(str(summary))} chars]")
+                        else:
+                            logger.warning(f"⚠️  No previous step available, passing None")
+                            step_input[key] = None
+                    
+                    # 明确指定 step_id 的情况
+                    elif step_id in step_contexts:
                         if field_path:
                             step_input[key] = self._get_nested_value(step_contexts[step_id], field_path)
+                            logger.debug(f"📦 传递上下文: {key} <- context.{step_id}.{field_path}")
                         else:
                             # 传递完整上下文
                             context_value = step_contexts[step_id]
                             step_input[key] = context_value
                             logger.info(f"📦 传递上下文: {key} <- context.{step_id} (包含 {len(context_value)} 个字段: {list(context_value.keys()) if isinstance(context_value, dict) else 'non-dict'})")
                     else:
-                        # 🆕 Phase 4.2: 当依赖的步骤被动态跳过时，传 None 而不是忽略
-                        # 这样下游 skill 知道这个参数应该存在但被跳过了
-                        logger.warning(f"⚠️  依赖的 step {step_id} 不存在或未执行（可能被动态跳过），传递 None")
-                        step_input[key] = None
+                        # 🆕 Phase 4.3: 从 session_context 查找 fallback artifact
+                        fallback_value = self._find_artifact_from_session(
+                            session_context=session_context,
+                            artifact_type=step_id,  # 例如 "explain"
+                            topic=user_input.get("topic")
+                        )
+                        
+                        if fallback_value:
+                            # 🎉 找到了 session 中的相关 artifact
+                            if field_path:
+                                step_input[key] = self._get_nested_value(fallback_value, field_path)
+                                logger.info(f"✅ 从 session fallback: {key} <- {step_id}.{field_path} (artifact from history)")
+                            else:
+                                step_input[key] = fallback_value
+                                logger.info(f"✅ 从 session fallback: {key} <- {step_id} (artifact from history)")
+                        else:
+                            # 仍然找不到，跳过该参数 (不传 None，让 skill 使用默认行为)
+                            logger.warning(f"⚠️  依赖的 step {step_id} 不存在，且 session 中无相关 artifact，跳过参数 '{key}'")
+                            # 不设置 step_input[key]，让下游自己处理
             else:
                 # 直接值
                 step_input[key] = value_template
@@ -904,6 +959,124 @@ class PlanSkillExecutor:
         }
         
         return bundle
+    
+    def _create_context_summary(
+        self,
+        context: Dict[str, Any],
+        step_id: str
+    ) -> Dict[str, Any]:
+        """
+        🆕 创建前一步上下文的压缩 summary（上下文卸载）
+        
+        策略：保留关键字段，压缩冗余内容
+        - 保留小字段（<100 chars）
+        - 压缩大字段（>100 chars）为摘要
+        - 数组：保留长度信息
+        
+        Args:
+            context: 完整的前一步上下文
+            step_id: 前一步的 step_id
+        
+        Returns:
+            压缩后的 summary
+        """
+        if not isinstance(context, dict):
+            return context
+        
+        summary = {}
+        
+        for key, value in context.items():
+            if isinstance(value, str):
+                if len(value) > 100:
+                    # 长文本：保留前80字符 + 长度信息
+                    summary[key] = value[:80] + f"... [total: {len(value)} chars]"
+                else:
+                    summary[key] = value
+            
+            elif isinstance(value, list):
+                # 数组：保留长度 + 第一个元素示例
+                if len(value) > 0:
+                    summary[key] = {
+                        "_type": "array",
+                        "_length": len(value),
+                        "_sample": value[0] if len(value) > 0 else None
+                    }
+                else:
+                    summary[key] = []
+            
+            elif isinstance(value, dict):
+                # 嵌套字典：递归压缩
+                summary[key] = self._create_context_summary(value, step_id)
+            
+            else:
+                # 其他类型（int, bool 等）：直接保留
+                summary[key] = value
+        
+        # 添加元信息
+        summary["_context_meta"] = {
+            "from_step": step_id,
+            "original_size_chars": len(str(context)),
+            "summary_size_chars": len(str(summary)),
+            "compression_ratio": f"{(1 - len(str(summary)) / max(len(str(context)), 1)) * 100:.1f}%"
+        }
+        
+        logger.debug(
+            f"📉 Context compressed: {len(str(context))} → {len(str(summary))} chars "
+            f"({summary['_context_meta']['compression_ratio']} reduction)"
+        )
+        
+        return summary
+    
+    def _find_artifact_from_session(
+        self,
+        session_context: Optional[Any],
+        artifact_type: str,
+        topic: Optional[str] = None
+    ) -> Optional[Dict[str, Any]]:
+        """
+        从 session_context.artifact_history 中查找相关 artifact
+        
+        当 Plan Skill 的某个步骤被动态跳过时，尝试从会话历史中查找
+        该类型的 artifact 作为 fallback。
+        
+        Args:
+            session_context: 会话上下文
+            artifact_type: Artifact 类型 (e.g., "explain" → "explanation")
+            topic: 可选主题，用于过滤
+        
+        Returns:
+            找到的 artifact content (压缩的 summary)，或 None
+        """
+        if not session_context or not hasattr(session_context, 'artifact_history'):
+            return None
+        
+        # 类型映射: step_id → artifact_type
+        type_mapping = {
+            "explain": "explanation",
+            "quiz": "quiz_set",
+            "flashcard": "flashcard_set",
+            "mindmap": "mindmap",
+            "notes": "notes"
+        }
+        
+        target_type = type_mapping.get(artifact_type, artifact_type)
+        
+        # 从后往前查找 (最新的优先)
+        for artifact_record in reversed(session_context.artifact_history):
+            # 匹配类型
+            if artifact_record.artifact_type == target_type:
+                # 如果指定了 topic，进一步匹配
+                if topic and artifact_record.topic != topic:
+                    continue
+                
+                # 返回 artifact 的 content (压缩的 summary)
+                if artifact_record.content:
+                    logger.info(f"🔍 Found {target_type} artifact from session history: {artifact_record.artifact_id}")
+                    logger.info(f"   Topic: {artifact_record.topic}, Turn: {artifact_record.turn_number}")
+                    return artifact_record.content
+        
+        logger.debug(f"🔍 No {target_type} artifact found in session history")
+        return None
     
     def _get_nested_value(self, data: Any, path: str) -> Any:
         """

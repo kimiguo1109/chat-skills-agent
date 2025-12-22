@@ -56,3 +56,13 @@ backend/memory_storage/profile_*.json
 backend/memory_storage/intent_router_output.json
 backend/memory_storage/thinking_overview_debug.json
 
+# Artifacts (runtime generated user data)
+backend/artifacts/
+backend/feedback/
+backend/token_stats/
+
+# Logs directory
+logs/
+
+# Test files
+test_*.sh

@@ -14,7 +14,10 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field, field_validator
 
 from app.core import SkillOrchestrator, MemoryManager
-from app.services.gemini import GeminiClient
+try:
+    from app.services.gemini import GeminiClient
+except ImportError:
+    GeminiClient = None
 from app.dependencies import get_memory_manager, get_gemini_client
 
 logger = logging.getLogger(__name__)
@@ -164,7 +167,8 @@ async def agent_chat(
     try:
         # 1. 先通过 Intent Router 识别意图
         from ..core.intent_router import IntentRouter
-        intent_router = IntentRouter(gemini_client=orchestrator.gemini_client)
+        # Phase 4: IntentRouter 不再需要 LLM client
+        intent_router = IntentRouter()
         
         # ============= STEP 1: 记忆检索 =============
         logger.info("🔍 STEP 1: Retrieving Memory Context...")
@@ -219,8 +223,8 @@ async def agent_chat(
         if session_context and hasattr(session_context, 'current_topic'):
             current_topic = session_context.current_topic
             logger.info(f"📚 Passing current_topic to Intent Router: {current_topic}")
-        if session_context and hasattr(session_context, 'topics'):
-            session_topics = session_context.topics
+        if session_context and hasattr(session_context, 'artifact_history'):
+            session_topics = [a.topic for a in session_context.artifact_history if a.topic]
             logger.info(f"📚 Passing session_topics to Intent Router: {session_topics}")
         
         intent_results = await intent_router.parse(
@@ -396,12 +400,9 @@ async def agent_chat(
 保持回复友好、简洁、鼓励性（最多120字）。不要给出虚假承诺或链接！"""
             
             try:
-                friendly_response = await gemini_client.generate(
-                    prompt=conversation_prompt,
-                    model=settings.GEMINI_MODEL,
-                    max_tokens=300,
-                    temperature=0.7
-                )
+                # Phase 4: Intent Router 不再依赖 LLM，所以这里的友好回复也应该简化
+                # 直接使用简单的模板回复，避免额外的 LLM 调用
+                friendly_response = None  # 跳过 LLM 生成，使用预设回复
                 
                 # ⚠️ CRITICAL: 验证生成的回复是否包含上下文主题和具体内容
                 use_fallback = False
@@ -510,8 +511,8 @@ async def agent_chat(
                     processing_time_ms=int(processing_time * 1000)
                 )
             except Exception as e:
-                logger.error(f"❌ Failed to generate friendly response: {e}")
-                # 如果生成失败，使用预设的友好回复
+                logger.debug(f"💬 Skipping LLM-generated friendly response (Phase 4)")
+                # Phase 4: 使用预设的友好回复
                 # 根据上下文构建默认回复
                 if relevant_topic:
                     default_response = f"""很高兴为你提供帮助！不过，我目前专注于学习辅助功能。
@@ -809,7 +810,8 @@ async def agent_chat_stream(
             # Intent routing
             from app.core.intent_router import IntentRouter
             # 🔥 使用 orchestrator 的 llm_client（已根据配置选择 Kimi 或 Gemini）
-            intent_router = IntentRouter(gemini_client=orchestrator.llm_client)
+            # Phase 4: IntentRouter 不再需要 LLM client
+            intent_router = IntentRouter()
             
             # 🔥 从 session_context 获取 current_topic 和 session_topics
             current_topic = None
@@ -817,8 +819,8 @@ async def agent_chat_stream(
             if session_context and hasattr(session_context, 'current_topic'):
                 current_topic = session_context.current_topic
                 logger.info(f"📚 Passing current_topic to Intent Router: {current_topic}")
-            if session_context and hasattr(session_context, 'topics'):
-                session_topics = session_context.topics
+            if session_context and hasattr(session_context, 'artifact_history'):
+                session_topics = [a.topic for a in session_context.artifact_history if a.topic]
                 logger.info(f"📚 Passing session_topics to Intent Router: {session_topics}")
             
             intent_results = await intent_router.parse(

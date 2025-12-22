@@ -1,11 +1,173 @@
 {
   "description": "Intent Router 实时输出记录 (Phase 3 架构)",
-  "latest": {},
-  "history": [],
+  "latest": {
+    "timestamp": "2025-12-22T05:31:54.992248",
+    "user_message": "ответ",
+    "method": "llm_fallback_gemini",
+    "tokens_used": 119,
+    "results": [
+      {
+        "intent": "other",
+        "topic": null,
+        "confidence": 0.7,
+        "parameters": {}
+      }
+    ]
+  },
+  "history": [
+    {
+      "timestamp": "2025-12-22T05:08:02.475289",
+      "user_message": "okay lets start to begin",
+      "method": "skill_registry",
+      "tokens_used": 0,
+      "results": [
+        {
+          "intent": "other",
+          "topic": null,
+          "confidence": 0.95,
+          "parameters": {
+            "topic": "无特定问题",
+            "is_conversation": true,
+            "has_files": null
+          }
+        }
+      ]
+    },
+    {
+      "timestamp": "2025-12-22T05:08:53.781680",
+      "user_message": "okay let's start in statistics",
+      "method": "skill_registry",
+      "tokens_used": 0,
+      "results": [
+        {
+          "intent": "other",
+          "topic": null,
+          "confidence": 0.95,
+          "parameters": {
+            "topic": "无特定问题",
+            "is_conversation": true,
+            "has_files": null
+          }
+        }
+      ]
+    },
+    {
+      "timestamp": "2025-12-22T05:09:15.483292",
+      "user_message": "lets proceed now",
+      "method": "llm_fallback_gemini",
+      "tokens_used": 122,
+      "results": [
+        {
+          "intent": "other",
+          "topic": null,
+          "confidence": 0.7,
+          "parameters": {}
+        }
+      ]
+    },
+    {
+      "timestamp": "2025-12-22T05:09:30.468925",
+      "user_message": "this is my first time I don't know how to proceed",
+      "method": "llm_fallback_gemini",
+      "tokens_used": 130,
+      "results": [
+        {
+          "intent": "other",
+          "topic": null,
+          "confidence": 0.7,
+          "parameters": {}
+        }
+      ]
+    },
+    {
+      "timestamp": "2025-12-22T05:10:20.927736",
+      "user_message": "Please help me analyze this image/file",
+      "method": "llm_fallback_gemini",
+      "tokens_used": 127,
+      "results": [
+        {
+          "intent": "other",
+          "topic": null,
+          "confidence": 0.7,
+          "parameters": {}
+        }
+      ]
+    },
+    {
+      "timestamp": "2025-12-22T05:10:50.872455",
+      "user_message": "that’s wrong",
+      "method": "llm_fallback_gemini",
+      "tokens_used": 121,
+      "results": [
+        {
+          "intent": "other",
+          "topic": null,
+          "confidence": 0.7,
+          "parameters": {}
+        }
+      ]
+    },
+    {
+      "timestamp": "2025-12-22T05:13:50.268504",
+      "user_message": "Please help me analyze this image/file",
+      "method": "llm_fallback_gemini",
+      "tokens_used": 127,
+      "results": [
+        {
+          "intent": "other",
+          "topic": null,
+          "confidence": 0.7,
+          "parameters": {}
+        }
+      ]
+    },
+    {
+      "timestamp": "2025-12-22T05:14:18.186515",
+      "user_message": "To'rtda olmoshga, har bittasiga uchtadan gap tuzib ber.",
+      "method": "llm_fallback_gemini",
+      "tokens_used": 122,
+      "results": [
+        {
+          "intent": "quiz",
+          "topic": "olmoshlar",
+          "confidence": 0.9,
+          "parameters": {}
+        }
+      ]
+    },
+    {
+      "timestamp": "2025-12-22T05:27:58.845174",
+      "user_message": "биринчи расмдагини бажар 109",
+      "method": "llm_fallback_gemini",
+      "tokens_used": 125,
+      "results": [
+        {
+          "intent": "other",
+          "topic": null,
+          "confidence": 0.7,
+          "parameters": {}
+        }
+      ]
+    },
+    {
+      "timestamp": "2025-12-22T05:31:54.992248",
+      "user_message": "ответ",
+      "method": "llm_fallback_gemini",
+      "tokens_used": 119,
+      "results": [
+        {
+          "intent": "other",
+          "topic": null,
+          "confidence": 0.7,
+          "parameters": {}
+        }
+      ]
+    }
+  ],
   "stats": {
-    "total_requests": 0,
+    "total_requests": 103,
     "rule_based_success": 0,
-    "llm_fallback": 0,
+    "llm_fallback": 98,
     "rule_success_rate": "0.0%"
   }
 }

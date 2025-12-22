@@ -8,6 +8,7 @@ Memory Manager - 记忆管理器
 import os
 import logging
 import json
+import asyncio
 from typing import Optional, Dict, Union, Any
 from datetime import datetime
 from pathlib import Path
@@ -25,6 +26,28 @@ logger = logging.getLogger(__name__)
 class MemoryManager:
     """记忆管理器 - 管理用户学习画像和会话上下文"""
     
+    # 🆕 服务启动 ID（类变量，整个进程共享）
+    _server_start_id: str = None
+    
+    # 🆕 并发安全：用于保护 _conversation_sessions 字典的锁
+    _session_lock: asyncio.Lock = None
+    
+    @classmethod
+    def _get_session_lock(cls) -> asyncio.Lock:
+        """获取或创建 session 锁（延迟初始化以兼容事件循环）"""
+        if cls._session_lock is None:
+            cls._session_lock = asyncio.Lock()
+        return cls._session_lock
+    
+    @classmethod
+    def get_server_start_id(cls) -> str:
+        """获取或生成服务启动 ID（每次服务重启时生成新的）"""
+        if cls._server_start_id is None:
+            import uuid
+            cls._server_start_id = str(uuid.uuid4())
+            logger.info(f"🆕 Generated server_start_id: {cls._server_start_id[:8]}...")
+        return cls._server_start_id
+    
     def __init__(self, use_s3: Optional[bool] = None, local_storage_dir: Optional[str] = None):
         """
         初始化 Memory Manager
@@ -33,7 +56,22 @@ class MemoryManager:
             use_s3: 是否使用 S3 存储（None 时使用 settings 配置，False 强制内存，True 强制 S3）
             local_storage_dir: 本地存储目录（用于调试和查看memory内容）
         """
-        self.use_s3 = use_s3 if use_s3 is not None else settings.USE_S3_STORAGE
+        # 确定是否使用 S3
+        # 如果 use_s3=None，使用 settings 配置；否则使用传入的值
+        use_s3_setting = use_s3 if use_s3 is not None else settings.USE_S3_STORAGE
+        
+        # 🆕 集成 S3StorageManager 和 ArtifactStorage
+        # 如果配置启用 S3，始终创建 S3StorageManager（让它自己判断是否可用）
+        # 这样 ConversationSessionManager 可以获得 s3_manager，即使 S3 暂时不可用
+        if use_s3_setting:
+            self.s3_manager = S3StorageManager()
+            # 根据实际可用性更新 use_s3
+            self.use_s3 = self.s3_manager.is_available()
+            if not self.use_s3:
+                logger.warning("⚠️  S3 configured but not available, falling back to local storage")
+        else:
+            self.s3_manager = None
+            self.use_s3 = False
         
         # 内存存储
         self._user_profiles: Dict[str, UserLearningProfile] = {}
@@ -45,9 +83,6 @@ class MemoryManager:
             "memory_storage"
         ))
         self.local_storage_dir.mkdir(parents=True, exist_ok=True)
-        
-        # 🆕 集成 S3StorageManager 和 ArtifactStorage
-        self.s3_manager = S3StorageManager() if self.use_s3 else None
         self.artifact_storage = ArtifactStorage(
             base_dir="artifacts",
             s3_manager=self.s3_manager
@@ -567,70 +602,56 @@ class MemoryManager:
             self._quarantine_invalid_artifact(artifact_id, artifact, "serialization_failed")
             raise ValueError(f"Cannot serialize artifact: {e}") from e
         
-        # 🎚️ 存储策略判断
-        # 设计理念：所有 artifacts 都存储到 S3，构建完整的用户画像
-        # 用户画像对于意图识别、个性化学习内容生成至关重要
-        OFFLOAD_THRESHOLD = 0  # bytes - 所有内容都上传 S3
+        # 🎚️ 存储策略：保存压缩的summary作为content，支持上下文卸载
+        # 完整内容在MD文件中，这里只保存摘要用于LLM快速上下文加载
+        summary_text = self._generate_summary(artifact, artifact_type)
         
-        if content_size >= OFFLOAD_THRESHOLD:  # 现在始终为 True
-            # 卸载到 S3/文件系统
-            try:
-                # 🔥 修复：user_id 已经包含 "user_" 前缀，不需要再加
-                storage_session_id = user_id if user_id.startswith("user_") else f"user_{user_id}"
-                
-                reference = self.artifact_storage.save_step_result(
-                    session_id=storage_session_id,
-                    step_id=artifact_id,
-                    result=artifact,
-                    metadata={
-                        "artifact_type": artifact_type,
-                        "topic": topic,
-                        "size_bytes": content_size
-                    }
-                )
-                
-                # 创建引用记录
-                record = ArtifactRecord(
-                    artifact_id=artifact_id,
-                    turn_number=self._get_turn_number(session_id),
-                    artifact_type=artifact_type,
-                    topic=topic,
-                    summary=self._generate_summary(artifact, artifact_type),
-                    content_reference=reference,  # S3 URI 或本地路径
-                    content=None  # 不存内容
-                )
-                logger.info(f"💾 Artifact {artifact_id} offloaded: {reference} ({content_size} bytes)")
-            except Exception as e:
-                logger.error(f"❌ Failed to offload artifact {artifact_id}: {e}")
-                # 降级：inline 存储
-                record = ArtifactRecord(
-                    artifact_id=artifact_id,
-                    turn_number=self._get_turn_number(session_id),
-                    artifact_type=artifact_type,
-                    topic=topic,
-                    summary=self._generate_summary(artifact, artifact_type),
-                    content=artifact,  # 降级到 inline
-                    content_reference=None
-                )
-                logger.warning(f"⚠️  Fallback to inline storage for {artifact_id}")
-        else:
-            # 小内容：inline 存储
-            record = ArtifactRecord(
-                artifact_id=artifact_id,
-                turn_number=self._get_turn_number(session_id),
-                artifact_type=artifact_type,
-                topic=topic,
-                summary=self._generate_summary(artifact, artifact_type),
-                content=artifact,
-                content_reference=None
-            )
-            logger.info(f"📄 Artifact {artifact_id} stored inline ({content_size} bytes)")
+        # 🔥 先使用 fallback 压缩作为 summary（用于 LLM 上下文）
+        context_summary_placeholder = self._fallback_compression(artifact, artifact_type, topic)
+        
+        # 🆕 content 保存原始完整数据（用于引用解析），summary 保存压缩摘要（用于 LLM 上下文）
+        record = ArtifactRecord(
+            artifact_id=artifact_id,
+            turn_number=self._get_turn_number(session_id),
+            artifact_type=artifact_type,
+            topic=topic,
+            summary=context_summary_placeholder,  # 🆕 摘要放这里，用于 LLM 上下文
+            content=artifact,  # 🆕 原始完整数据放这里，用于引用解析
+            content_reference=None  # 不需要外部引用（完整内容在MD）
+        )
+        logger.info(f"📝 Artifact {artifact_id} recorded (full content: {content_size} chars, summary: {len(str(context_summary_placeholder))} chars)")
         
         # 添加到 session context
         session_context = await self.get_session_context(session_id)
         session_context.artifact_history.append(record)
         session_context.last_artifact_id = artifact_id
         await self.update_session_context(session_id, session_context)
+        
+        # 🆕 按需压缩策略（优化 token 消耗）
+        # - 小 artifact (<1000 chars)：不压缩，直接使用 fallback summary
+        # - 中等 artifact (1000-5000 chars)：使用 Gemini 压缩
+        # - 大 artifact (>5000 chars)：必须压缩
+        #
+        # Token 成本分析 (Gemini 2.0 Flash Lite):
+        # - Input: $0.075/M tokens → ~1900 tokens ≈ $0.00014
+        # - Output: $0.30/M tokens → ~700 tokens ≈ $0.00021
+        # - Total: ~$0.00035/次
+        artifact_size = len(json.dumps(artifact, ensure_ascii=False))
+        
+        # 压缩阈值配置
+        COMPRESSION_THRESHOLD = 1000  # 只对 >1000 chars 的 artifact 进行 LLM 压缩
+        
+        if artifact_size >= COMPRESSION_THRESHOLD:
+            # 启动后台 Gemini 压缩
+            logger.info(f"📊 Artifact size: {artifact_size} chars (>= {COMPRESSION_THRESHOLD}), triggering Gemini compression")
+            task = asyncio.create_task(
+                self._compress_artifact_async(artifact_id, artifact, artifact_type, topic, session_id, user_id)
+            )
+            task.add_done_callback(lambda t: t.exception() if not t.cancelled() else None)
+            logger.debug(f"🔄 Started background Gemini compression for {artifact_id}")
+        else:
+            # 小 artifact：跳过 LLM 压缩，节省 token
+            logger.info(f"📊 Artifact size: {artifact_size} chars (< {COMPRESSION_THRESHOLD}), skipping LLM compression (using rule-based summary)")
         
         return record
     
@@ -743,7 +764,7 @@ class MemoryManager:
         return 1
     
     def _generate_summary(self, artifact: Dict[str, Any], artifact_type: str) -> str:
-        """生成 artifact 摘要"""
+        """生成 artifact 摘要（用于显示）"""
         # 根据不同类型生成摘要
         if artifact_type == "explanation":
             concept = artifact.get("concept", "Unknown")
@@ -752,13 +773,239 @@ class MemoryManager:
             num_questions = len(artifact.get("questions", []))
             return f"Quiz: {num_questions} questions"
         elif artifact_type == "flashcard_set":
-            num_cards = len(artifact.get("cards", []))
+            # 兼容新旧格式：cardList (新) 或 cards (旧)
+            cards = artifact.get("cardList") or artifact.get("cards", [])
+            num_cards = len(cards)
             return f"Flashcards: {num_cards} cards"
         elif artifact_type == "notes":
             title = artifact.get("structured_notes", {}).get("title", "Unknown")
             return f"Notes: {title}"
         else:
             return f"{artifact_type}"
+    
+    async def _compress_artifact_async(
+        self,
+        artifact_id: str,
+        artifact: Dict[str, Any],
+        artifact_type: str,
+        topic: str,
+        session_id: str,
+        user_id: str = "unknown"  # 🆕 添加 user_id 参数
+    ):
+        """
+        后台异步任务：使用 LLM 智能压缩 artifact
+        
+        执行流程：
+        1. 调用 LLM 进行智能压缩
+        2. 更新 session_context 中的 artifact record
+        3. 不阻塞用户响应
+        4. 🆕 记录 token 使用到 MemoryTokenTracker
+        
+        ⚠️ 注意：此方法会长时间运行 (~260s)，但不会阻塞用户
+        """
+        try:
+            logger.info(f"🔄 Background compression started for {artifact_id}")
+            logger.debug(f"   This will take ~260s but won't block user response")
+            
+            # 调用 LLM 进行智能压缩 (长时间运行)
+            compressed_summary, token_usage = await self._create_context_summary(artifact, artifact_type, topic)
+            
+            # 🆕 记录 token 使用
+            if token_usage and token_usage.get("total_tokens", 0) > 0:
+                from app.services.memory_token_tracker import get_memory_token_tracker
+                tracker = get_memory_token_tracker()
+                tracker.record_compression(
+                    user_id=user_id,
+                    session_id=session_id,
+                    artifact_id=artifact_id,
+                    prompt_tokens=token_usage.get("prompt_tokens", 0),
+                    completion_tokens=token_usage.get("completion_tokens", 0),
+                    total_tokens=token_usage.get("total_tokens", 0),
+                    model=token_usage.get("model", "gemini-2.5-flash")
+                )
+            
+            # 更新 session context 中的 artifact record
+            session_context = await self.get_session_context(session_id)
+            
+            for record in session_context.artifact_history:
+                if record.artifact_id == artifact_id:
+                    # 🆕 compressed_summary 现在始终是 string（在 _compress_artifact 中已转换）
+                    record.summary = str(compressed_summary)
+                    # 🔥 不覆盖 record.content，保留原始完整数据用于引用解析
+                    logger.info(f"✅ Background compression complete for {artifact_id}, summary: {len(record.summary)} chars")
+                    break
+            
+            # 保存更新后的 session context
+            await self.update_session_context(session_id, session_context)
+            logger.info(f"💾 Session context updated with compressed artifact")
+            
+        except Exception as e:
+            logger.error(f"❌ Background compression failed for {artifact_id}: {e}")
+            logger.exception(e)
+            logger.debug(f"   Fallback summary will be used instead")
+    
+    async def _create_context_summary(self, artifact: Dict[str, Any], artifact_type: str, topic: str) -> Dict[str, Any]:
+        """
+        🆕 创建上下文友好的摘要（使用 LLM 智能压缩）
+        
+        策略：
+        - 使用 summary_skill LLM 进行语义压缩
+        - 目标压缩比 > 90% (e.g., 2000 tokens → < 200 tokens)
+        - 保留逻辑关系，丢弃冗余描述
+        
+        Args:
+            artifact: 原始 artifact 内容
+            artifact_type: Artifact 类型
+            topic: 主题
+        
+        Returns:
+            压缩的 context summary（Dict）
+        """
+        try:
+            import json
+            from pathlib import Path
+            
+            # 加载 summary_skill prompt
+            # __file__ = backend/app/core/memory_manager.py
+            # parent = backend/app/core
+            # parent.parent = backend/app
+            # parent.parent.parent = backend
+            summary_prompt_path = Path(__file__).parent.parent / "prompts" / "summary_skill.txt"
+            
+            if not summary_prompt_path.exists():
+                logger.warning(f"⚠️ summary_skill.txt not found at {summary_prompt_path}, using fallback compression")
+                return self._fallback_compression(artifact, artifact_type, topic)
+            
+            with open(summary_prompt_path, 'r', encoding='utf-8') as f:
+                summary_prompt = f.read()
+            
+            # 构造压缩请求
+            compression_input = {
+                "interaction_type": self._map_artifact_type_to_interaction(artifact_type),
+                "topic": topic,
+                "ai_response": json.dumps(artifact, ensure_ascii=False),
+                "artifact_type": artifact_type
+            }
+            
+            # 添加参数 JSON
+            params_json = json.dumps(compression_input, ensure_ascii=False, indent=2)
+            full_prompt = f"{summary_prompt}\n\n## Input Parameters (JSON)\n\n```json\n{params_json}\n```"
+            
+            # 🔄 使用 Gemini 2.0 Flash Exp 进行快速压缩（不用 thinking 模型）
+            from app.services.gemini import GeminiClient
+            gemini = GeminiClient()
+            
+            response = await gemini.generate(
+                prompt=full_prompt,
+                response_format="json",
+                temperature=0.3,  # 低温度，保证确定性输出
+                thinking_budget=0,  # 🔧 禁用思考模式以确保完整输出
+                return_thinking=False
+            )
+            
+            # 🆕 提取 token 使用信息
+            # 注意：Gemini 返回 input_tokens/output_tokens，需要映射到 prompt_tokens/completion_tokens
+            token_usage = {}
+            if isinstance(response, dict) and "usage" in response:
+                usage = response["usage"]
+                # Gemini 使用 input_tokens/output_tokens，但其他地方使用 prompt_tokens/completion_tokens
+                input_t = usage.get("input_tokens", 0) or usage.get("prompt_tokens", 0)
+                output_t = usage.get("output_tokens", 0) or usage.get("completion_tokens", 0)
+                token_usage = {
+                    "prompt_tokens": input_t,
+                    "completion_tokens": output_t,
+                    "total_tokens": usage.get("total_tokens", 0) or (input_t + output_t),
+                    "model": "gemini-2.5-flash"
+                }
+                logger.info(f"📊 Compression token usage: input={input_t:,}, output={output_t:,}, total={token_usage['total_tokens']:,}")
+            
+            # 解析压缩结果
+            if isinstance(response, dict) and "content" in response:
+                content = response["content"]
+                
+                # content 可能是 str (JSON string) 或 dict (已解析的 JSON)
+                if isinstance(content, str):
+                    compressed = json.loads(content)
+                elif isinstance(content, dict):
+                    compressed = content
+                else:
+                    logger.warning(f"⚠️ Unexpected content type: {type(content)}, using fallback")
+                    return self._fallback_compression(artifact, artifact_type, topic), {}
+                
+                original_size = len(json.dumps(artifact, ensure_ascii=False))
+                
+                # 🆕 将 Gemini 返回的 dict 转换为 string summary
+                # ArtifactRecord.summary 必须是 string
+                if isinstance(compressed, dict):
+                    # 优先提取 context_summary 字段
+                    if 'context_summary' in compressed:
+                        summary_str = str(compressed['context_summary'])
+                    # 否则尝试提取关键摘要字段
+                    elif 'summary' in compressed:
+                        summary_str = str(compressed['summary'])
+                    elif 'mental_model' in compressed:
+                        mental = compressed.get('mental_model', '')
+                        key_concepts = compressed.get('key_concepts', [])
+                        summary_str = f"[{artifact_type}] {topic}: {mental}. 关键概念: {', '.join(key_concepts[:3])}"
+                    else:
+                        # 将整个 dict 转为简洁的 JSON string
+                        summary_str = json.dumps(compressed, ensure_ascii=False)[:300]
+                else:
+                    summary_str = str(compressed)
+                
+                compressed_size = len(summary_str)
+                compression_ratio = (1 - compressed_size / original_size) * 100 if original_size > 0 else 0
+                
+                logger.info(f"✅ LLM compressed {artifact_type}: {original_size} → {compressed_size} chars (-{compression_ratio:.1f}%)")
+                return summary_str, token_usage  # 🆕 返回 tuple
+            else:
+                logger.warning("⚠️ LLM compression failed, using fallback")
+                return self._fallback_compression(artifact, artifact_type, topic), {}
+        
+        except Exception as e:
+            logger.error(f"❌ Error during LLM compression: {e}")
+            return self._fallback_compression(artifact, artifact_type, topic), {}
+    
+    def _map_artifact_type_to_interaction(self, artifact_type: str) -> str:
+        """将 artifact_type 映射到 interaction_type"""
+        mapping = {
+            "explanation": "explain",
+            "quiz_set": "quiz",
+            "flashcard_set": "flashcard"
+        }
+        return mapping.get(artifact_type, "chat")
+    
+    def _fallback_compression(self, artifact: Dict[str, Any], artifact_type: str, topic: str) -> str:
+        """
+        Fallback: 简单的基于规则的压缩（当 LLM 不可用时）
+        
+        🔧 重要：返回 string 而不是 dict，因为 ArtifactRecord.summary 期望 string
+        """
+        if artifact_type == "explanation":
+            concept = artifact.get("concept", topic)
+            intuition = artifact.get("intuition", "")[:100]
+            examples = [ex.get("example", "")[:50] for ex in artifact.get("examples", [])[:2]]
+            return f"[概念讲解] {concept}: {intuition}... 例子: {', '.join(examples)}"
+        
+        elif artifact_type == "quiz_set":
+            questions = artifact.get("questions", [])
+            q_summaries = [q.get("question_text", "")[:40] for q in questions[:3]]
+            return f"[练习题] {topic}: {len(questions)}道题 - {'; '.join(q_summaries)}..."
+        
+        elif artifact_type == "flashcard_set":
+            # 兼容新旧格式：cardList (新) 或 cards (旧)
+            cards = artifact.get("cardList") or artifact.get("cards", [])
+            card_fronts = [c.get("front", "")[:30] for c in cards[:3]]
+            return f"[闪卡] {topic}: {len(cards)}张 - {'; '.join(card_fronts)}..."
+        
+        elif artifact_type == "mindmap":
+            return f"[思维导图] {topic}: 结构化知识梳理"
+        
+        elif artifact_type == "notes":
+            return f"[笔记] {topic}: 学习要点整理"
+        
+        else:
+            return f"[{artifact_type}] {topic}: 学习内容"
     
     def get_conversation_session_manager(
         self,
@@ -767,24 +1014,38 @@ class MemoryManager:
         """
         获取或创建用户的 ConversationSessionManager
         
+        🔒 并发安全：使用双重检查锁定模式
+        
         Args:
             user_id: 用户ID
         
         Returns:
             ConversationSessionManager 实例
         """
-        if user_id not in self._conversation_sessions:
-            # 创建新的 session manager
-            storage_path = self.artifact_storage.base_dir / user_id
-            storage_path.mkdir(parents=True, exist_ok=True)
-            
-            self._conversation_sessions[user_id] = ConversationSessionManager(
-                user_id=user_id,
-                storage_path=str(storage_path),
-                s3_manager=self.s3_manager
-            )
-            
-            logger.info(f"✅ Created ConversationSessionManager for {user_id}")
+        # 🔒 第一次检查（无锁，快速路径）
+        if user_id in self._conversation_sessions:
+            return self._conversation_sessions[user_id]
+        
+        # 🔒 需要创建新的 session manager，使用同步锁保护
+        import threading
+        if not hasattr(self, '_sync_lock'):
+            self._sync_lock = threading.Lock()
+        
+        with self._sync_lock:
+            # 🔒 第二次检查（有锁，防止重复创建）
+            if user_id not in self._conversation_sessions:
+                # 创建新的 session manager
+                storage_path = self.artifact_storage.base_dir / user_id
+                storage_path.mkdir(parents=True, exist_ok=True)
+                
+                self._conversation_sessions[user_id] = ConversationSessionManager(
+                    user_id=user_id,
+                    storage_path=str(storage_path),
+                    s3_manager=self.s3_manager,
+                    server_start_id=self.get_server_start_id()  # 🆕 传递服务启动 ID
+                )
+                
+                logger.info(f"✅ Created ConversationSessionManager for {user_id}")
         
         return self._conversation_sessions[user_id]
 

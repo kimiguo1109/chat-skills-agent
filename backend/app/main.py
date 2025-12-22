@@ -144,12 +144,18 @@ async def root():
 
 
 # 在这里注册路由
-from .api import intent, agent, history, auth
+from .api import intent, agent, history, auth, external, external_web, chat, studyx_agent, feedback
 
 app.include_router(intent.router)
 app.include_router(agent.router)
 app.include_router(history.router)
 app.include_router(auth.router)
+app.include_router(external.router)  # 外部 API 接口（含 skill 框架）- App 端
+app.include_router(external_web.router)  # 🆕 Web 专用 API（SSE 流式 + Edit/Regenerate）
+app.include_router(external_web.studyx_router)  # 🆕 StudyX 兼容接口（newHomeChatQuestionV2/newHwRefreshAnswer）
+app.include_router(chat.router)  # 🆕 纯 Chat API（简化版，不走 skill 框架）
+app.include_router(studyx_agent.router)  # 🆕 StudyX Agent API（新的 createFlashcardAgent 接口）
+app.include_router(feedback.router)  # 🆕 用户反馈 + 聊天历史 API
 
 # TODO: 在后续任务中添加更多路由
 # from .api import skills

@@ -59,6 +59,15 @@ class IntentResult(BaseModel):
         default_factory=dict,
         description="额外参数，如 quantity（数量）、difficulty（难度）等"
     )
+    # 🆕 引用解析结果
+    referenced_content: Optional[str] = Field(
+        None,
+        description="从历史 artifacts 中解析的引用内容，如'第二题的内容'"
+    )
+    has_reference: bool = Field(
+        default=False,
+        description="是否包含对历史 artifacts 的引用"
+    )
     
     model_config = {
         "json_schema_extra": {

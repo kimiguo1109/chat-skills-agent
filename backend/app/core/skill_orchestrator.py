@@ -18,11 +18,16 @@ from datetime import datetime
 from ..models.intent import IntentResult, MemorySummary
 from ..models.memory import UserLearningProfile, SessionContext
 from ..models.skill import SkillDefinition
-from ..services.gemini import GeminiClient
+try:
+    from ..services.gemini import GeminiClient
+except ImportError:
+    GeminiClient = None
 from ..services.kimi import KimiClient  # 🆕 导入 KimiClient
 from ..config import settings  # 🆕 导入配置
 from .skill_registry import SkillRegistry, get_skill_registry
 from .memory_manager import MemoryManager
+from .thinking_mode_selector import ThinkingModeSelector  # 🆕 导入智能思考模式选择器
+from .reference_resolver import get_reference_resolver, ReferenceResolver  # 🆕 导入引用解析器
 
 logger = logging.getLogger(__name__)
 
@@ -46,18 +51,19 @@ class SkillOrchestrator:
         """
         self.skill_registry = skill_registry or get_skill_registry()
         
-        # 🔥 根据配置选择 LLM Client
-        if settings.KIMI_API_KEY and settings.KIMI_MODEL:
-            self.llm_client = KimiClient()
-            logger.info("✅ Using Kimi Client for LLM operations")
-        else:
-            self.llm_client = gemini_client or GeminiClient()
-            logger.info("✅ Using Gemini Client for LLM operations")
+        # 🔧 临时配置：全部使用 Gemini（关闭 Kimi 以提升速度）
+        self.llm_client = gemini_client or GeminiClient()
+        logger.info("✅ Using Gemini Client for ALL LLM operations (Kimi disabled)")
         
-        # 保持向后兼容
+        # Gemini Client 也指向同一实例
         self.gemini_client = self.llm_client
+        logger.info("✅ All thinking modes use Gemini 2.5 Flash")
         
-        self.memory_manager = memory_manager or MemoryManager()
+        # 确保 MemoryManager 使用 S3（如果配置启用）
+        self.memory_manager = memory_manager or MemoryManager(use_s3=settings.USE_S3_STORAGE)
+        
+        # 🆕 初始化智能思考模式选择器
+        self.thinking_mode_selector = ThinkingModeSelector()
         
         # Prompt 文件目录
         self.prompts_dir = os.path.join(
@@ -65,7 +71,7 @@ class SkillOrchestrator:
             "prompts"
         )
         
-        logger.info("✅ SkillOrchestrator initialized")
+        logger.info("✅ SkillOrchestrator initialized with ThinkingModeSelector")
     
     async def execute_stream(
         self,
@@ -101,8 +107,8 @@ class SkillOrchestrator:
                 if reason == "topic_missing":
                     # Topic 缺失，需要用户提供
                     recent_topics = []
-                    if session_context and session_context.topics:
-                        recent_topics = session_context.topics[-5:]  # 最近5个topics
+                    if session_context and session_context.artifact_history:
+                        recent_topics = [a.topic for a in session_context.artifact_history[-5:] if a.topic]  # 最近5个topics
                     
                     if recent_topics:
                         # 有历史 topics，让用户选择
@@ -155,6 +161,13 @@ class SkillOrchestrator:
                         }
                     }
                     return
+            
+            # 🆕 处理 'other' intent（普通对话）
+            if intent_result.intent == "other":
+                logger.info(f"💬 Handling 'other' intent as chat conversation")
+                async for chunk in self._handle_chat_stream(intent_result, user_id, session_id):
+                    yield chunk
+                return
             
             # Step 1: 选择技能
             skill = self._select_skill(intent_result)  # 🔧 修复：传递IntentResult对象
@@ -213,7 +226,7 @@ class SkillOrchestrator:
                 if final_content:
                     try:
                         session_mgr = self.memory_manager.get_conversation_session_manager(user_id)
-                        await session_mgr.start_or_continue_session(intent_result.raw_text)
+                        await session_mgr.start_or_continue_session(intent_result.raw_text, session_id=session_id)
                         
                         await session_mgr.append_turn({
                             "user_query": intent_result.raw_text,
@@ -250,6 +263,37 @@ class SkillOrchestrator:
                 skill, intent_result, context, additional_params
             )
             
+            # 🆕 Step 3.1: 引用解析（如果消息包含对历史 artifacts 的引用）
+            if intent_result.has_reference:
+                reference_resolver = get_reference_resolver()
+                session_context_for_ref = await self.memory_manager.get_session_context(session_id)
+                
+                if session_context_for_ref and session_context_for_ref.artifact_history:
+                    resolved_refs = reference_resolver.resolve_references(
+                        intent_result.raw_text,
+                        session_context_for_ref.artifact_history
+                    )
+                    
+                    if resolved_refs:
+                        resolved_content = reference_resolver.format_resolved_content(resolved_refs)
+                        if resolved_content:
+                            params["referenced_content"] = resolved_content
+                            logger.info(f"🔗 Resolved {len(resolved_refs)} reference(s): {len(resolved_content)} chars")
+                            
+                            # 🆕 使用来源 artifact 的 topic（而非 current_topic）
+                            # 例如：用户说 "把第一张闪卡出题"，闪卡是光合作用的，
+                            # 即使 current_topic 是细胞呼吸，也应该用光合作用
+                            source_topic = resolved_refs[0].source_topic
+                            if source_topic:
+                                params["topic"] = source_topic
+                                intent_result.topic = source_topic  # 🔧 也更新 intent_result
+                                logger.info(f"🔗 Using source topic from referenced artifact: {source_topic}")
+                            
+                            yield {
+                                "type": "status",
+                                "message": f"📎 已提取引用内容 (来源: {source_topic or '未知'})"
+                            }
+            
             # 检查是否需要澄清
             if not params.get("topic"):
                 yield {
@@ -258,9 +302,264 @@ class SkillOrchestrator:
                 }
                 return
             
+            # 🆕 Step 3.5: 多主题澄清检查（流式版本）
+            session_context = await self.memory_manager.get_session_context(session_id)
+            
+            # 🔧 如果引用已经解析成功，跳过多主题澄清
+            # 因为引用解析已经确定了目标内容的 topic
+            reference_resolved = params.get("referenced_content") is not None
+            
+            # 检查是否有多个主题需要澄清
+            if not reference_resolved and session_context and session_context.artifact_history:
+                recent_topics = await self._extract_recent_topics(session_id)
+                
+                # 如果有 2+ 个不同主题，且用户没有明确指定主题
+                if len(recent_topics) >= 2:
+                    # 检查用户消息是否明确提到了某个主题
+                    message_lower = intent_result.raw_text.lower()
+                    has_explicit_topic = any(topic.lower() in message_lower for topic in recent_topics)
+                    
+                    if not has_explicit_topic:
+                        logger.info(f"❓ Multi-topic clarification needed: {recent_topics}")
+                        yield {
+                            "type": "done",
+                            "content_type": "clarification_needed",
+                            "content": {
+                                "question": f"您想基于哪个主题继续？",
+                                "reason": "topic_ambiguous",
+                                "options": [
+                                    {
+                                        "type": "topic",
+                                        "label": topic,
+                                        "value": topic,
+                                        "icon": "📚"
+                                    }
+                                    for topic in recent_topics[:5]
+                                ],
+                                "allow_custom_input": True,
+                                "custom_input_placeholder": "或者输入新的主题...",
+                                "original_intent": intent_result.intent,
+                                "original_message": intent_result.raw_text
+                            }
+                        }
+                        return
+            elif reference_resolved:
+                logger.info(f"✅ Reference resolved, skipping multi-topic clarification")
+            
+            # 🆕 Step 3.6: 智能选择思考模式
+            thinking_config = self.thinking_mode_selector.select_mode(
+                intent_result=intent_result,
+                session_context=session_context
+            )
+            
+            # 🔧 临时配置：全部使用 Gemini（关闭 Kimi）
+            active_client = GeminiClient()
+            logger.info(f"⚡ Using Gemini: {thinking_config['reasoning']}")
+            
+            # 通知前端使用的模式
+            yield {
+                "type": "status",
+                "message": f"🤖 {thinking_config['reasoning']}"
+            }
+            
             # Step 4: 加载 prompt
             prompt_content = self._load_prompt(skill)
             prompt = self._format_prompt(prompt_content, params, context)
+            
+            # 🆕 Step 4.5: 发送上下文预览（让用户知道基于什么生成）
+            context_preview = self._generate_context_preview(
+                context=context,
+                params=params,
+                thinking_mode=thinking_config["mode"]
+            )
+            if context_preview:
+                yield {
+                    "type": "context_preview",
+                    "message": context_preview["message"],
+                    "details": context_preview.get("details", [])
+                }
+            
+            # 🔥 Step 4.6: flashcard_skill 特殊处理 - 总是调用外部 API
+            # 📌 外部 API 支持多种输入：
+            #    - 有 reference_explanation（前面有解释内容）→ 使用解释内容
+            #    - 有 referenced_content（用户引用了历史内容）→ 使用引用内容
+            #    - 有 input_text（用户提供的原始文本）→ 使用原始文本
+            #    - 只有 topic → 使用 topic 作为输入
+            
+            if skill.id == 'flashcard_skill':
+                logger.info(f"🌐 Using External API for flashcard_skill")
+                yield {
+                    "type": "status",
+                    "message": "🌐 正在调用外部服务生成闪卡..."
+                }
+                
+                try:
+                    # 调用外部 API
+                    api_result = await self._execute_flashcard_via_external_api(params, context)
+                    
+                    # 解析结果
+                    parsed_content = json.loads(api_result["content"])
+                    content_type = "flashcard_set"
+                    
+                    # 模拟流式输出 - 发送内容
+                    yield {
+                        "type": "content",
+                        "text": api_result["content"],
+                        "accumulated": api_result["content"]
+                    }
+                    
+                    # Step 8: 更新 memory（保存 artifact）
+                    logger.info(f"💾 Saving artifact in stream mode (type: {content_type})")
+                    try:
+                        await self._update_memory(
+                            user_id=user_id,
+                            session_id=session_id,
+                            intent_result=intent_result,
+                            skill_result=parsed_content
+                        )
+                        logger.info(f"✅ Artifact saved and memory updated in stream mode")
+                    except Exception as e:
+                        logger.error(f"❌ Failed to save artifact in stream mode: {e}")
+                    
+                    # 🆕 提取实际 topic
+                    actual_topic_stream = self._extract_topic_from_result(parsed_content, intent_result.topic)
+                    if actual_topic_stream:
+                        intent_result.topic = actual_topic_stream
+                    
+                    # Step 9: 追加到 Conversation Session MD 文件
+                    try:
+                        session_mgr = self.memory_manager.get_conversation_session_manager(user_id)
+                        await session_mgr.start_or_continue_session(intent_result.raw_text, session_id=session_id)
+                        
+                        await session_mgr.append_turn({
+                            "user_query": intent_result.raw_text,
+                            "agent_response": {
+                                "skill": skill.id,
+                                "artifact_id": parsed_content.get("artifact_id", ""),
+                                "content": parsed_content,
+                                "topic": actual_topic_stream  # 🆕 实际 topic
+                            },
+                            "response_type": content_type,
+                            "timestamp": datetime.now(),
+                            "intent": intent_result.model_dump(),
+                            "metadata": {
+                                "external_api": True,
+                                "model": "external_flashcard_api"
+                            }
+                        })
+                        logger.debug(f"📝 Appended turn to conversation session MD")
+                    except Exception as e:
+                        logger.error(f"❌ Failed to append to conversation session: {e}")
+                    
+                    logger.info(f"✅ External API flashcard generation complete")
+                    
+                    # 发送完成事件
+                    yield {
+                        "type": "done",
+                        "thinking": None,
+                        "content": parsed_content,
+                        "content_type": content_type,
+                        "usage_summary": {"external_api": True}
+                    }
+                    
+                    logger.info(f"✅ Stream orchestration complete for {skill.id} (external API)")
+                    return
+                    
+                except Exception as e:
+                    logger.error(f"❌ External flashcard API failed: {e}, falling back to LLM")
+                    yield {
+                        "type": "status",
+                        "message": f"⚠️ 外部服务异常，使用 AI 生成..."
+                    }
+                    # 继续执行 LLM 流程作为 fallback
+            
+            # 🔥 Step 4.7: quiz_skill 特殊处理 - 总是调用外部 API
+            if skill.id == 'quiz_skill':
+                logger.info(f"🌐 Using External API for quiz_skill")
+                yield {
+                    "type": "status",
+                    "message": "🌐 正在调用外部服务生成测验..."
+                }
+                
+                try:
+                    # 调用外部 API
+                    api_result = await self._execute_quiz_via_external_api(params, context)
+                    
+                    # 解析结果
+                    parsed_content = json.loads(api_result["content"])
+                    content_type = "quiz_set"
+                    
+                    # 模拟流式输出 - 发送内容
+                    yield {
+                        "type": "content",
+                        "text": api_result["content"],
+                        "accumulated": api_result["content"]
+                    }
+                    
+                    # Step 8: 更新 memory（保存 artifact）
+                    logger.info(f"💾 Saving artifact in stream mode (type: {content_type})")
+                    try:
+                        await self._update_memory(
+                            user_id=user_id,
+                            session_id=session_id,
+                            intent_result=intent_result,
+                            skill_result=parsed_content
+                        )
+                        logger.info(f"✅ Artifact saved and memory updated in stream mode")
+                    except Exception as e:
+                        logger.error(f"❌ Failed to save artifact in stream mode: {e}")
+                    
+                    # 🆕 提取实际 topic
+                    actual_topic_quiz = self._extract_topic_from_result(parsed_content, intent_result.topic)
+                    if actual_topic_quiz:
+                        intent_result.topic = actual_topic_quiz
+                    
+                    # Step 9: 追加到 Conversation Session MD 文件
+                    try:
+                        session_mgr = self.memory_manager.get_conversation_session_manager(user_id)
+                        await session_mgr.start_or_continue_session(intent_result.raw_text, session_id=session_id)
+                        
+                        await session_mgr.append_turn({
+                            "user_query": intent_result.raw_text,
+                            "agent_response": {
+                                "skill": skill.id,
+                                "artifact_id": parsed_content.get("artifact_id", ""),
+                                "content": parsed_content,
+                                "topic": actual_topic_quiz  # 🆕 实际 topic
+                            },
+                            "response_type": content_type,
+                            "timestamp": datetime.now(),
+                            "intent": intent_result.model_dump(),
+                            "metadata": {
+                                "external_api": True,
+                                "model": "external_quiz_api"
+                            }
+                        })
+                        logger.debug(f"📝 Appended turn to conversation session MD")
+                    except Exception as e:
+                        logger.error(f"❌ Failed to append to conversation session: {e}")
+                    
+                    logger.info(f"✅ External API quiz generation complete")
+                    
+                    # 发送完成事件
+                    yield {
+                        "type": "done",
+                        "thinking": None,
+                        "content": parsed_content,
+                        "content_type": content_type,
+                        "usage_summary": {"external_api": True}
+                    }
+                    
+                    logger.info(f"✅ Stream orchestration complete for {skill.id} (external API)")
+                    return
+                    
+                except Exception as e:
+                    logger.error(f"❌ External quiz API failed: {e}, falling back to LLM")
+                    yield {
+                        "type": "status",
+                        "message": f"⚠️ 外部服务异常，使用 AI 生成..."
+                    }
+                    # 继续执行 LLM 流程作为 fallback
             
             # Step 5: 流式调用 LLM
             yield {
@@ -270,6 +569,7 @@ class SkillOrchestrator:
             
             thinking_accumulated = []
             content_accumulated = []
+            usage_stats = {}  # 🆕 收集 token 使用统计
             
             # 🔄 重试机制：处理 API 连接中断
             max_retries = 2
@@ -285,19 +585,32 @@ class SkillOrchestrator:
                         }
                         logger.warning(f"🔄 Retrying API call (attempt {retry_count}/{max_retries})")
                     
-                    # 🔥 使用 llm_client（支持 Kimi 或 Gemini）
-                    async for chunk in self.llm_client.generate_stream(
+                    # 🔥 使用智能选择的 LLM 客户端
+                    # 🆕 直接使用配置的 thinking_budget，不再强制提升到 64
+                    optimized_budget = thinking_config.get("thinking_budget", 32)
+                    
+                    async for chunk in active_client.generate_stream(
                         prompt=prompt,
-                        model=skill.models.get("primary", self.llm_client.model),
-                        thinking_budget=skill.thinking_budget or 64,
+                        model=thinking_config["model"],
+                        thinking_budget=optimized_budget,  # 使用优化后的 budget
                         buffer_size=1,
-                        temperature=getattr(skill, 'temperature', 1.0)
+                        temperature=thinking_config.get("temperature", 1.0)
                     ):
                         # 累积数据
                         if chunk["type"] == "thinking":
                             thinking_accumulated.append(chunk.get("text", ""))
                         elif chunk["type"] == "content":
                             content_accumulated.append(chunk.get("text", ""))
+                        elif chunk["type"] == "usage":
+                            # 🆕 收集 token 使用统计
+                            usage_stats = chunk.get("usage", {})
+                            logger.info(f"📊 Collected usage stats: {usage_stats}")
+                            continue  # 不转发给前端，仅内部使用
+                        elif chunk["type"] == "done":
+                            # 🔧 FIX: 不转发底层的 done 事件，由 orchestrator 发送自己的 done 事件
+                            # 这样可以确保 content_type 被正确设置
+                            logger.debug(f"📦 Received done from LLM client, will send orchestrator's done event")
+                            continue
                         elif chunk["type"] == "error":
                             # API 返回的错误
                             api_error_occurred = True
@@ -423,6 +736,12 @@ class SkillOrchestrator:
                 }
                 return
             
+            # 🔧 Step 1: 清理常见格式问题（中文引号、trailing commas等）
+            json_str = self._clean_json_string(json_str)
+            
+            # 🔧 Step 2: 修复 LaTeX 公式中的转义问题
+            json_str = self._fix_latex_escapes(json_str)
+            
             # 尝试解析 JSON
             try:
                 parsed_content = json.loads(json_str)
@@ -481,7 +800,7 @@ class SkillOrchestrator:
                 content_type = "quiz_set"
             elif "concept" in parsed_content or "explanation" in parsed_content:
                 content_type = "explanation"
-            elif "flashcard_set_id" in parsed_content or "cards" in parsed_content:
+            elif "cardList" in parsed_content or "flashcard_set_id" in parsed_content or "cards" in parsed_content:
                 content_type = "flashcard_set"
             elif "notes_id" in parsed_content or "structured_notes" in parsed_content:
                 content_type = "notes"
@@ -510,17 +829,23 @@ class SkillOrchestrator:
                 logger.error(f"❌ Failed to save artifact in stream mode: {e}")
                 # 不中断流程，继续返回结果
             
+            # 🆕 提取实际 topic
+            actual_topic_llm = self._extract_topic_from_result(parsed_content, intent_result.topic)
+            if actual_topic_llm:
+                intent_result.topic = actual_topic_llm
+            
             # Step 9: 追加到 Conversation Session MD 文件
             try:
                 session_mgr = self.memory_manager.get_conversation_session_manager(user_id)
-                await session_mgr.start_or_continue_session(intent_result.raw_text)
+                await session_mgr.start_or_continue_session(intent_result.raw_text, session_id=session_id)
                 
                 await session_mgr.append_turn({
                     "user_query": intent_result.raw_text,
                     "agent_response": {
                         "skill": skill.id,
                         "artifact_id": parsed_content.get("artifact_id", ""),
-                        "content": parsed_content
+                        "content": parsed_content,
+                        "topic": actual_topic_llm  # 🆕 实际 topic
                     },
                     "response_type": content_type,
                     "timestamp": datetime.now(),
@@ -535,12 +860,95 @@ class SkillOrchestrator:
             except Exception as e:
                 logger.error(f"❌ Failed to append to conversation session (stream): {e}")
             
+            # 🆕 输出详细的 Token 使用汇总
+            logger.info(f"\n{'='*70}")
+            logger.info(f"📊 REQUEST TOKEN USAGE SUMMARY")
+            logger.info(f"{'='*70}")
+            logger.info(f"🎯 Skill: {skill.id} ({skill.display_name})")
+            logger.info(f"📚 Topic: {intent_result.topic}")
+            logger.info(f"🤖 Model: {thinking_config.get('model', 'unknown')}")
+            logger.info(f"{'─'*70}")
+            
+            # Intent Router (0 tokens - local matching)
+            logger.info(f"1️⃣  Intent Router:        0 tokens (local skill registry match)")
+            
+            # Main LLM Generation
+            model_name = usage_stats.get('model', thinking_config.get('model', 'unknown')) if usage_stats else 'unknown'
+            is_gemini = 'gemini' in model_name.lower()
+            llm_label = "Gemini" if is_gemini else "Kimi"
+            
+            if usage_stats:
+                source = usage_stats.get('source', 'unknown')
+                gen_time = usage_stats.get('generation_time', 0)
+                
+                if source == 'api':
+                    # 精确数据（来自 API）
+                    prompt_tokens = usage_stats.get('prompt_tokens', 0)
+                    completion_tokens = usage_stats.get('completion_tokens', 0)
+                    total_tokens = usage_stats.get('total_tokens', 0)
+                    logger.info(f"2️⃣  Main Generation ({llm_label}) [EXACT]:")
+                    logger.info(f"    • Input:    {prompt_tokens:,} tokens")
+                    logger.info(f"    • Output:   {completion_tokens:,} tokens")
+                    logger.info(f"    • Total:    {total_tokens:,} tokens")
+                    if gen_time > 0:
+                        logger.info(f"    • Time:     {gen_time:.1f}s")
+                    main_total = total_tokens
+                elif source == 'estimated':
+                    # 估算数据（Gemini 流式 fallback）
+                    thinking_chars = usage_stats.get('thinking_chars', 0)
+                    content_chars = usage_stats.get('content_chars', 0)
+                    completion_tokens = usage_stats.get('completion_tokens', 0)
+                    # Gemini Flash prompt 通常较小（skill prompt ~500 + context ~500）
+                    estimated_input = 1000
+                    total_estimated = estimated_input + completion_tokens
+                    logger.info(f"2️⃣  Main Generation ({llm_label}) [ESTIMATED]:")
+                    logger.info(f"    • Input:    ~{estimated_input:,} tokens (prompt)")
+                    logger.info(f"    • Output:   ~{completion_tokens:,} tokens (from {content_chars} chars)")
+                    logger.info(f"    • Total:    ~{total_estimated:,} tokens")
+                    main_total = total_estimated
+                else:
+                    # gemini_stream 格式（只有 chars）
+                    thinking_chars = usage_stats.get('thinking_chars', 0)
+                    content_chars = usage_stats.get('content_chars', 0)
+                    # 估算 tokens（中文约 0.5 token/char，JSON 约 0.3 token/char）
+                    estimated_output = int((thinking_chars + content_chars) * 0.4)
+                    # Gemini Flash prompt 通常较小（skill prompt ~500 + context ~500）
+                    estimated_input = 1000
+                    total_estimated = estimated_input + estimated_output
+                    logger.info(f"2️⃣  Main Generation ({llm_label}) [ESTIMATED]:")
+                    logger.info(f"    • Input:    ~{estimated_input:,} tokens (prompt)")
+                    logger.info(f"    • Output:   ~{estimated_output:,} tokens (from {content_chars} chars)")
+                    logger.info(f"    • Total:    ~{total_estimated:,} tokens")
+                    if gen_time > 0:
+                        logger.info(f"    • Time:     {gen_time:.1f}s")
+                    main_total = total_estimated
+            else:
+                logger.info(f"2️⃣  Main Generation ({llm_label}): No usage stats available")
+                main_total = 0
+            
+            # Background compression (conditional based on artifact size)
+            # 🆕 只有 artifact > 2500 chars 时才触发 LLM 压缩
+            content_size = len(json.dumps(parsed_content, ensure_ascii=False)) if parsed_content else 0
+            
+            # 始终使用 Gemini 压缩（异步后台执行）
+            # Gemini 2.0 Flash Exp 压缩成本：~500-800 tokens ≈ $0.0001/次
+            compression_estimate = 600  # Gemini 压缩请求的平均 token 消耗
+            estimated_compressed = int(content_size * 0.25)  # 约压缩到 25%
+            logger.info(f"3️⃣  Context Compress:     ~{compression_estimate:,} tokens (Gemini async, {content_size} → ~{estimated_compressed} chars)")
+            logger.info(f"{'─'*70}")
+            
+            # Total estimate
+            total_estimated = main_total + compression_estimate
+            logger.info(f"📈 TOTAL FOR THIS REQUEST: ~{total_estimated:,} tokens")
+            logger.info(f"{'='*70}\n")
+            
             # 完成
             yield {
                 "type": "done",
                 "thinking": full_thinking,
                 "content": parsed_content,
-                "content_type": content_type
+                "content_type": content_type,
+                "usage_summary": usage_stats  # 🆕 包含使用统计
             }
             
             logger.info(f"✅ Stream orchestration complete for {skill.id}")
@@ -595,8 +1003,8 @@ class SkillOrchestrator:
                 # 检查历史 topics
                 session_context = await self.memory_manager.get_session_context(session_id)
                 recent_topics = []
-                if session_context and session_context.topics:
-                    recent_topics = session_context.topics[-5:]  # 最近5个topics
+                if session_context and session_context.artifact_history:
+                    recent_topics = [a.topic for a in session_context.artifact_history[-5:] if a.topic]  # 最近5个topics
                 
                 if recent_topics:
                     # 有历史 topics，让用户选择
@@ -725,59 +1133,126 @@ class SkillOrchestrator:
             #    如果用户明确说了topic（如"微积分"），直接执行，不需要引导
             topic_is_valid = intent_result.topic and len(intent_result.topic) >= 3
             
-            # 🆕 首次访问 + 无明确topic：提供onboarding引导（0 token消耗）
-            if len(artifact_history) == 0 and not topic_is_valid:
+            # 🆕 检查是否有文件附件（有文件时跳过onboarding）
+            has_file_uri = bool(intent_result.parameters.get('file_uri'))
+            
+            # 🆕 对于 learning_bundle，检查原始消息是否有具体主题
+            # 例如 "帮我制定学习计划，主题是光合作用" 应该直接执行
+            raw_text = intent_result.raw_text or ""
+            has_explicit_topic_in_message = any(kw in raw_text for kw in ['主题是', '关于', '学习', '计划'])
+            
+            # 🆕 首次访问 + 无明确topic + 无文件：提供onboarding引导（0 token消耗）
+            # 跳过条件：有文件、有明确主题指定、或是 learning_bundle 且消息中有明确主题
+            skip_onboarding = has_file_uri or (intent_result.intent == "learning_bundle" and has_explicit_topic_in_message)
+            
+            if len(artifact_history) == 0 and not topic_is_valid and not skip_onboarding:
                 logger.info(f"👋 First-time user detected, showing onboarding (0 tokens)")
                 
-                return {
-                    "content_type": "onboarding",
-                    "intent": intent_result.intent,
-                    "response_content": {
-                        "welcome": "👋 欢迎使用 StudyX Agent！",
-                        "message": "我注意到您还没有开始学习任何主题。",
-                        "suggestions": [
-                            {
-                                "category": "物理",
-                                "topics": ["牛顿定律", "光学", "电磁学", "量子力学"],
-                                "icon": "⚛️"
-                            },
-                            {
-                                "category": "数学",
-                                "topics": ["微积分", "线性代数", "概率论", "统计学"],
-                                "icon": "📐"
-                            },
-                            {
-                                "category": "历史",
-                                "topics": ["二战历史", "文艺复兴", "工业革命", "古代文明"],
-                                "icon": "📜"
-                            },
-                            {
-                                "category": "生物",
-                                "topics": ["光合作用", "细胞结构", "遗传学", "进化论"],
-                                "icon": "🧬"
-                            },
-                            {
-                                "category": "计算机",
-                                "topics": ["数据结构", "算法", "机器学习", "网络"],
-                                "icon": "💻"
-                            }
-                        ],
-                        "call_to_action": "请先告诉我您想学习什么主题，例如：「讲讲牛顿第二定律」或「什么是光合作用」"
-                    }
-                }
-            
-            # 🆕 多主题澄清：即使有 current_topic，如果有多个历史主题也应询问
-            if len(artifact_history) > 0 and not topic_is_valid:
-                # 提取最近的主题列表
-                recent_topics = await self._extract_recent_topics(session_id)
+                # 🆕 获取语言设置
+                language = additional_params.get("language", "en") if additional_params else "en"
                 
-                # 如果有多个主题，提供澄清选项
-                if len(recent_topics) >= 2:
-                    logger.info(f"❓ Multiple topics detected ({len(recent_topics)} topics), requesting clarification")
+                if language == "en":
+                    return {
+                        "content_type": "onboarding",
+                        "intent": intent_result.intent,
+                        "response_content": {
+                            "welcome": "👋 Welcome to StudyX Agent!",
+                            "message": "I noticed you haven't started learning any topic yet.",
+                            "suggestions": [
+                                {
+                                    "category": "Physics",
+                                    "topics": ["Newton's Laws", "Optics", "Electromagnetism", "Quantum Mechanics"],
+                                    "icon": "⚛️"
+                                },
+                                {
+                                    "category": "Math",
+                                    "topics": ["Calculus", "Linear Algebra", "Probability", "Statistics"],
+                                    "icon": "📐"
+                                },
+                                {
+                                    "category": "History",
+                                    "topics": ["World War II", "Renaissance", "Industrial Revolution", "Ancient Civilizations"],
+                                    "icon": "📜"
+                                },
+                                {
+                                    "category": "Biology",
+                                    "topics": ["Photosynthesis", "Cell Structure", "Genetics", "Evolution"],
+                                    "icon": "🧬"
+                                },
+                                {
+                                    "category": "Computer Science",
+                                    "topics": ["Data Structures", "Algorithms", "Machine Learning", "Networking"],
+                                    "icon": "💻"
+                                }
+                            ],
+                            "call_to_action": "Please tell me what topic you'd like to learn, for example: 'Explain Newton's second law' or 'What is photosynthesis?'"
+                        }
+                    }
+                else:
+                    return {
+                        "content_type": "onboarding",
+                        "intent": intent_result.intent,
+                        "response_content": {
+                            "welcome": "👋 欢迎使用 StudyX Agent！",
+                            "message": "我注意到您还没有开始学习任何主题。",
+                            "suggestions": [
+                                {
+                                    "category": "物理",
+                                    "topics": ["牛顿定律", "光学", "电磁学", "量子力学"],
+                                    "icon": "⚛️"
+                                },
+                                {
+                                    "category": "数学",
+                                    "topics": ["微积分", "线性代数", "概率论", "统计学"],
+                                    "icon": "📐"
+                                },
+                                {
+                                    "category": "历史",
+                                    "topics": ["二战历史", "文艺复兴", "工业革命", "古代文明"],
+                                    "icon": "📜"
+                                },
+                                {
+                                    "category": "生物",
+                                    "topics": ["光合作用", "细胞结构", "遗传学", "进化论"],
+                                    "icon": "🧬"
+                                },
+                                {
+                                    "category": "计算机",
+                                    "topics": ["数据结构", "算法", "机器学习", "网络"],
+                                    "icon": "💻"
+                                }
+                            ],
+                            "call_to_action": "请先告诉我您想学习什么主题，例如：「讲讲牛顿第二定律」或「什么是光合作用」"
+                        }
+                    }
+            
+            # 🆕 多主题澄清：仅在用户请求非常模糊时触发
+            # 条件：1) 没有文件附件  2) 消息中没有明确指定主题
+            if len(artifact_history) > 0 and not has_file_uri:
+                # 检查消息中是否包含任何明确的主题词汇
+                message_lower = intent_result.raw_text.lower()
+                
+                # 模糊请求模式（如 "再来三道题"、"继续"）
+                vague_patterns = ['再来', '继续', '更多', '还要', '再给', '多来', '再出']
+                is_vague_request = any(p in message_lower for p in vague_patterns) and len(message_lower) < 15
+                
+                # 提取最近的主题列表（去重）
+                recent_topics = await self._extract_recent_topics(session_id)
+                unique_topics = list(dict.fromkeys(recent_topics))  # 去重但保持顺序
+                
+                # 检查用户消息是否明确提到了某个主题
+                has_explicit_topic = any(topic.lower() in message_lower for topic in unique_topics if topic)
+                
+                # 🔥 关键：当请求模糊 + 有多个不同主题 + 没有明确指定主题时，触发澄清
+                # 即使 topic_is_valid 为 True（从 current_topic 继承），也要澄清
+                if is_vague_request and len(unique_topics) >= 2 and not has_explicit_topic:
+                    logger.info(f"❓ Vague request with {len(unique_topics)} unique topics: {unique_topics}")
+                    logger.info(f"🤔 Multi-topic clarification needed (even though current_topic is set)")
                     
                     return {
                         "content_type": "clarification_needed",
                         "intent": intent_result.intent,
+                        "topic": intent_result.topic,  # 保留当前 topic 供参考
                         "response_content": {
                             "question": "我注意到您之前学习了多个主题，请问您想基于哪个主题继续？",
                             "reason": "topic_ambiguous",
@@ -788,7 +1263,7 @@ class SkillOrchestrator:
                                     "value": topic,
                                     "icon": "📚"
                                 }
-                                for topic in recent_topics[:5]  # 最多5个选项
+                                for topic in unique_topics[:5]  # 最多5个选项
                             ],
                             "allow_custom_input": True,
                             "custom_input_placeholder": "或者输入新的主题...",
@@ -797,85 +1272,61 @@ class SkillOrchestrator:
                         }
                     }
             
-            # 🆕 如果消息中没有明确主题，但有 current_topic，检查是否应该澄清
-            # 特殊情况：用户只说"生成X张闪卡"，有多个历史主题
-            if topic_is_valid and len(artifact_history) > 0:
-                recent_topics = await self._extract_recent_topics(session_id)
-                # 如果有3个或更多不同主题，考虑澄清
-                if len(recent_topics) >= 3:
-                    # 检查消息是否非常模糊（没有明确提到主题）
-                    message_lower = intent_result.raw_text.lower()
-                    has_explicit_topic = any(topic in message_lower for topic in recent_topics)
-                    
-                    if not has_explicit_topic:
-                        logger.info(f"❓ Ambiguous request with {len(recent_topics)} topics, requesting clarification")
+            # 🆕 当有有效 topic 时，不再触发澄清 - 直接使用该 topic
+            # 用户明确指定的 topic 或 file_uri 会绕过澄清逻辑
+            # 删除了旧的 "Ambiguous request with N topics" 逻辑，因为它过于激进
+            
+            # 多主题澄清：只有当 topic 完全无效、没有文件附件、且请求模糊时才触发
+            # 🆕 增加更严格的条件：只有极端模糊的请求才需要澄清
+            if not topic_is_valid and len(artifact_history) > 1 and not has_file_uri:
+                # 检查是否是极端模糊的请求（只有动作没有任何内容）
+                message_lower = intent_result.raw_text.lower()
+                extreme_vague_patterns = ['再来', '继续', '更多', '还要', '再给', '多来', '出题', '给我']
+                is_extreme_vague = len(message_lower) < 10 and any(p in message_lower for p in extreme_vague_patterns)
+                
+                if is_extreme_vague:
+                    # 提取所有已学习的主题
+                    learned_topics = []
+                    seen_topics = set()
+                    for artifact in reversed(artifact_history):  # 最新的在前
+                        topic_val = artifact.topic if hasattr(artifact, 'topic') else artifact.get("topic")
+                        artifact_type = artifact.artifact_type if hasattr(artifact, 'artifact_type') else artifact.get("artifact_type", "unknown")
                         
+                        if topic_val and topic_val not in seen_topics:
+                            seen_topics.add(topic_val)
+                            learned_topics.append({
+                                "topic": topic_val,
+                                "type": artifact_type
+                            })
+                    
+                    if len(learned_topics) >= 2:  # 🆕 至少2个不同主题才澄清
+                        logger.info(f"💬 Extreme vague request with {len(learned_topics)} topic(s), asking user (0 tokens)")
+                        
+                        # 根据不同intent生成不同的问题
+                        intent_questions = {
+                            "notes": ("做笔记", "做{topic}的笔记"),
+                            "quiz_request": ("生成题目", "生成{topic}的题目"),
+                            "flashcard_request": ("生成闪卡", "生成{topic}的闪卡"),
+                            "explain_request": ("讲解", "讲解{topic}"),
+                            "mindmap": ("生成思维导图", "生成{topic}的思维导图"),
+                            "learning_bundle": ("获取学习包", "获取{topic}的学习资料")
+                        }
+                        
+                        action_text, example_text = intent_questions.get(
+                            intent_result.intent, 
+                            ("学习", "学习{topic}")
+                        )
+                        
+                        # 返回澄清响应（0 token消耗）
                         return {
-                            "content_type": "clarification_needed",
+                            "content_type": "clarification",
                             "intent": intent_result.intent,
                             "response_content": {
-                                "question": f"您想基于哪个主题生成？（当前默认：{intent_result.topic}）",
-                                "reason": "topic_ambiguous",
-                                "options": [
-                                    {
-                                        "type": "topic",
-                                        "label": topic,
-                                        "value": topic,
-                                        "icon": "📚"
-                                    }
-                                    for topic in recent_topics[:5]
-                                ],
-                                "allow_custom_input": True,
-                                "custom_input_placeholder": "或者输入新的主题...",
-                                "original_intent": intent_result.intent,
-                                "original_message": intent_result.raw_text
+                                "question": f"您想对哪个主题{action_text}呢？",
+                                "learned_topics": learned_topics[:5],  # 最多显示5个
+                                "suggestion": f"请告诉我您想选择的主题，例如：「{example_text.format(topic=learned_topics[0]['topic'])}」"
                             }
                         }
-            
-            # 多主题澄清：只有当topic无效且有多个主题时才触发
-            if not topic_is_valid and len(artifact_history) > 1:
-                # 提取所有已学习的主题
-                learned_topics = []
-                seen_topics = set()
-                for artifact in reversed(artifact_history):  # 最新的在前
-                    topic_val = artifact.topic if hasattr(artifact, 'topic') else artifact.get("topic")
-                    artifact_type = artifact.artifact_type if hasattr(artifact, 'artifact_type') else artifact.get("artifact_type", "unknown")
-                    
-                    if topic_val and topic_val not in seen_topics:
-                        seen_topics.add(topic_val)
-                        learned_topics.append({
-                            "topic": topic_val,
-                            "type": artifact_type
-                        })
-                
-                if len(learned_topics) >= 1:
-                    logger.info(f"💬 Clarification needed: {len(learned_topics)} topic(s) available, asking user (0 tokens)")
-                    
-                    # 根据不同intent生成不同的问题
-                    intent_questions = {
-                        "notes": ("做笔记", "做{topic}的笔记"),
-                        "quiz_request": ("生成题目", "生成{topic}的题目"),
-                        "flashcard_request": ("生成闪卡", "生成{topic}的闪卡"),
-                        "explain_request": ("讲解", "讲解{topic}"),
-                        "mindmap": ("生成思维导图", "生成{topic}的思维导图"),
-                        "learning_bundle": ("获取学习包", "获取{topic}的学习资料")
-                    }
-                    
-                    action_text, example_text = intent_questions.get(
-                        intent_result.intent, 
-                        ("学习", "学习{topic}")
-                    )
-                    
-                    # 返回澄清响应（0 token消耗）
-                    return {
-                        "content_type": "clarification",
-                        "intent": intent_result.intent,
-                        "response_content": {
-                            "question": f"您想对哪个主题{action_text}呢？",
-                            "learned_topics": learned_topics[:5],  # 最多显示5个
-                            "suggestion": f"请告诉我您想选择的主题，例如：「{example_text.format(topic=learned_topics[0]['topic'])}」"
-                        }
-                    }
         
         # ============= Phase 3: 处理 ambiguous/contextual 意图 =============
         
@@ -911,6 +1362,51 @@ class SkillOrchestrator:
             
             # 获取 session context（不调用 LLM，直接读取内存）
             session_context = await self.memory_manager.get_session_context(session_id)
+            
+            # 🆕 首先检查用户消息的意图类型
+            # 询问类消息应该转换为 explain/other，而不是生成新内容
+            user_message = intent_result.raw_text.lower()
+            
+            # 询问/解释请求模式（扩展覆盖更多场景）
+            inquiry_patterns = [
+                # 理解/澄清类
+                "不太理解", "不理解", "不太懂", "不懂", "不明白", "不清楚",
+                "能解释", "帮我解释", "详细解释", "更简单", "简单一点",
+                "什么意思", "怎么理解", "举个例子", "能举例",
+                # 描述/介绍类
+                "讲了什么", "说了什么", "是什么", "什么内容", "描述一下", "介绍一下",
+                "讲的是什么", "说的是什么", "内容是什么",
+                # 比较/分析类
+                "比较", "对比", "不同", "区别", "联系", "关系", "相同", "相似",
+                # 提问/请求帮助类
+                "怎么做", "如何做", "帮我解答", "帮我解决", "有什么",
+                "给我一些", "给点", "提示", "思路", "方向",
+                # 总结/概述类（不是要求生成笔记）
+                "总体来说", "总的来说", "概括一下", "简单说说"
+            ]
+            
+            # 生成请求模式（明确要求生成新内容）
+            generate_patterns = [
+                "再来", "再出", "再给", "多出", "继续出", "还要",
+                "更多题", "更多闪卡", "更多卡片",
+                "帮我出", "给我出", "出几道", "生成", "创建"
+            ]
+            
+            is_inquiry_request = any(p in user_message for p in inquiry_patterns)
+            is_generate_request = any(p in user_message for p in generate_patterns)
+            
+            if is_inquiry_request and not is_generate_request:
+                # 用户在请求询问/解释，不是生成新内容
+                # 返回一个特殊标记，让 external.py 使用 Gemini 处理
+                logger.info(f"🔍 Detected inquiry request in contextual message, redirecting to 'other' intent")
+                return {
+                    "content_type": "redirect_to_other",
+                    "intent": "other",
+                    "topic": session_context.current_topic if session_context else "",
+                    "content": {},
+                    "redirect": True,
+                    "original_message": intent_result.raw_text
+                }
             
             # 从 last_artifact 提取 topic
             if session_context and session_context.last_artifact:
@@ -978,9 +1474,52 @@ class SkillOrchestrator:
         # Step 3: 构建输入参数
         params = self._build_input_params(skill, intent_result, context, additional_params)
         
+        # 🆕 Step 3.1: 引用解析（如果消息包含对历史 artifacts 的引用）
+        if intent_result.has_reference:
+            reference_resolver = get_reference_resolver()
+            session_context_for_ref = await self.memory_manager.get_session_context(session_id)
+            
+            if session_context_for_ref and session_context_for_ref.artifact_history:
+                resolved_refs = reference_resolver.resolve_references(
+                    intent_result.raw_text,
+                    session_context_for_ref.artifact_history
+                )
+                
+                if resolved_refs:
+                    resolved_content = reference_resolver.format_resolved_content(resolved_refs)
+                    if resolved_content:
+                        params["referenced_content"] = resolved_content
+                        logger.info(f"🔗 Resolved {len(resolved_refs)} reference(s): {len(resolved_content)} chars")
+                        
+                        # 使用来源 artifact 的 topic
+                        for ref in resolved_refs:
+                            if ref.source_topic:
+                                intent_result.topic = ref.source_topic
+                                logger.info(f"🔗 Using source topic from reference: {ref.source_topic}")
+                                break
+                    else:
+                        logger.warning(f"⚠️  References detected but no content resolved")
+                else:
+                    logger.warning(f"⚠️  has_reference=True but resolve_references returned empty")
+            else:
+                logger.warning(f"⚠️  has_reference=True but no artifact_history available")
+        
+        # 🆕 Step 3.5: 智能选择思考模式
+        session_context = await self.memory_manager.get_session_context(session_id)
+        thinking_config = self.thinking_mode_selector.select_mode(
+            intent_result=intent_result,
+            session_context=session_context
+        )
+        
+        # 🔧 临时配置：全部使用 Gemini（关闭 Kimi）
+        active_client = GeminiClient()
+        logger.info(f"⚡ Using Gemini: {thinking_config['reasoning']}")
+        
         # Step 4: 执行技能
         try:
-            response = await self._execute_skill(skill, params, context)
+            response = await self._execute_skill(skill, params, context, 
+                                                 client=active_client, 
+                                                 thinking_config=thinking_config)
             # 🆕 response 是字典: {"content": str, "thinking": str, "usage": dict}
             
             # 提取内容
@@ -1004,8 +1543,18 @@ class SkillOrchestrator:
             logger.error(f"❌ Skill execution failed: {e}")
             return self._create_error_response("execution_error", str(e))
         
-        # Step 5: 封装输出（传入 intent_result）
+        # 🆕 Step 5: 提取实际 topic 并更新 intent_result
+        # 这样 API 响应和 MD 文件中存储的 topic 是实际的，而不是从用户消息提取的
+        actual_topic = self._extract_topic_from_result(result, intent_result.topic)
+        if actual_topic and actual_topic != intent_result.topic:
+            logger.info(f"📤 Updating intent_result.topic: '{intent_result.topic}' → '{actual_topic}'")
+            intent_result.topic = actual_topic
+        
+        # Step 5.5: 封装输出（传入更新后的 intent_result）
         output = self._wrap_output(skill, result, intent_result)
+        
+        # 🆕 添加 topic 到输出
+        output["topic"] = actual_topic or intent_result.topic or ""
         
         # Step 6: 更新记忆（异步，不阻塞）
         await self._update_memory(user_id, session_id, intent_result, result)
@@ -1013,14 +1562,15 @@ class SkillOrchestrator:
         # Step 7: 追加到 Conversation Session MD 文件
         try:
             session_mgr = self.memory_manager.get_conversation_session_manager(user_id)
-            await session_mgr.start_or_continue_session(intent_result.raw_text)
+            await session_mgr.start_or_continue_session(intent_result.raw_text, session_id=session_id)
             
             await session_mgr.append_turn({
                 "user_query": intent_result.raw_text,
                 "agent_response": {
                     "skill": skill.id,
                     "artifact_id": result.get("artifact_id", ""),
-                    "content": result
+                    "content": result,
+                    "topic": actual_topic  # 🆕 直接传递实际 topic
                 },
                 "response_type": output.get("content_type", "unknown"),
                 "timestamp": datetime.now(),
@@ -1035,8 +1585,134 @@ class SkillOrchestrator:
         except Exception as e:
             logger.error(f"❌ Failed to append to conversation session: {e}")
         
+        # 🆕 添加 usage_summary 到输出（供外部 API 统计）
+        # 确保包含模型信息
+        usage_summary = usage.copy() if usage else {}
+        if not usage_summary.get("model"):
+            usage_summary["model"] = thinking_config.get("model", "unknown")
+        if "thinking_mode" not in usage_summary:
+            usage_summary["thinking_mode"] = thinking_config.get("mode") == "real_thinking"
+        output["usage_summary"] = usage_summary
+        
         logger.info(f"✅ Orchestration complete for {skill.id}")
         return output
+    
+    async def _handle_chat_stream(
+        self,
+        intent_result: IntentResult,
+        user_id: str,
+        session_id: str
+    ):
+        """
+        🆕 处理普通对话的流式响应（intent=other）
+        
+        Args:
+            intent_result: 意图识别结果
+            user_id: 用户 ID
+            session_id: 会话 ID
+            
+        Yields:
+            流式响应事件
+        """
+        logger.info(f"💬 Starting chat stream for user {user_id}")
+        
+        # 加载对话历史（简化版，直接获取最近的 turns 文本）
+        session_mgr = self.memory_manager.get_conversation_session_manager(user_id)
+        conversation_context = ""
+        
+        try:
+            await session_mgr.start_or_continue_session(intent_result.raw_text, session_id=session_id)
+            # 获取最近 3 轮对话的 Markdown 文本
+            conversation_context = await session_mgr.get_recent_turns(num_turns=3)
+        except Exception as e:
+            logger.warning(f"⚠️ Failed to load conversation history: {e}")
+        
+        # 构建 prompt（将 system instruction 和对话历史合并到 prompt）
+        system_prompt = """你是一个友好的学习助手。请用简洁清晰的语言回答用户的问题。
+如果用户问的是学习相关的问题，提供有帮助的信息。
+如果用户只是打招呼或闲聊，友好地回应并引导他们开始学习。
+回复使用中文。"""
+        
+        # 构建完整的 prompt（包含历史）
+        full_prompt = f"{system_prompt}\n\n"
+        if conversation_context:
+            full_prompt += f"对话历史：\n{conversation_context}\n\n"
+        full_prompt += f"用户: {intent_result.raw_text}\n助手:"
+        
+        # 使用 Gemini 生成响应
+        full_response = ""
+        
+        try:
+            yield {"type": "status", "message": "正在思考..."}
+            
+            async for chunk in self.gemini_client.generate_stream(
+                prompt=full_prompt,
+                model="gemini-2.5-flash",
+                thinking_budget=0,  # 🔧 禁用思考以确保完整输出
+                buffer_size=5,
+                temperature=0.7
+            ):
+                if chunk.get("type") == "content":
+                    content = chunk.get("content", "")
+                    full_response += content
+                    yield {
+                        "type": "content",
+                        "content": content,
+                        "accumulated": full_response
+                    }
+                elif chunk.get("type") == "error":
+                    # 流式生成出错
+                    error_msg = chunk.get("message", "生成失败")
+                    logger.error(f"❌ Stream generation error: {error_msg}")
+                    full_response = f"抱歉，我暂时无法回复。请稍后再试。"
+                    yield {
+                        "type": "content",
+                        "content": full_response,
+                        "accumulated": full_response
+                    }
+            
+            # 如果响应为空，提供一个默认回复
+            if not full_response:
+                full_response = "你好！有什么我可以帮助你的吗？"
+            
+            # 发送完成事件
+            yield {
+                "type": "done",
+                "content_type": "text",
+                "content": {"text": full_response},
+                "intent": "other"
+            }
+            
+            # 保存到会话历史
+            try:
+                from datetime import datetime
+                await session_mgr.append_turn({
+                    "user_query": intent_result.raw_text,
+                    "agent_response": {
+                        "skill": "chat",
+                        "artifact_id": "",
+                        "content": {"text": full_response}
+                    },
+                    "response_type": "text",  # 🆕 添加必需的 response_type 字段
+                    "metadata": {
+                        "model": "gemini-2.5-flash",
+                        "source": "chat_stream"
+                    },
+                    "timestamp": datetime.now(),  # 🆕 改为 datetime 对象
+                    "intent": {
+                        "intent": "other",
+                        "topic": intent_result.topic
+                    }
+                })
+            except Exception as e:
+                logger.warning(f"⚠️ Failed to save chat turn: {e}")
+                
+        except Exception as e:
+            logger.error(f"❌ Chat stream error: {e}")
+            yield {
+                "type": "error",
+                "message": f"对话生成失败: {str(e)}"
+            }
     
     def _select_skill(self, intent_result: IntentResult) -> Optional[SkillDefinition]:
         """
@@ -1062,6 +1738,115 @@ class SkillOrchestrator:
         # 简单策略：取第一个
         # TODO: 可以实现更复杂的选择策略（基于上下文、用户偏好等）
         return matching_skills[0]
+    
+    def _clean_json_string(self, json_str: str) -> str:
+        """
+        全面清理 JSON 字符串，修复常见格式问题
+        
+        修复：
+        1. 中文引号 → 英文引号
+        2. 多余的逗号（trailing commas）
+        3. 缺少的逗号
+        4. 其他格式问题
+        
+        Args:
+            json_str: JSON 字符串
+        
+        Returns:
+            清理后的 JSON 字符串
+        """
+        # 1. 修复中文引号
+        json_str = json_str.replace('"', '"').replace('"', '"')
+        json_str = json_str.replace(''', "'").replace(''', "'")
+        
+        # 2. 修复 trailing commas (对象结尾)
+        import re
+        json_str = re.sub(r',\s*}', '}', json_str)
+        json_str = re.sub(r',\s*\]', ']', json_str)
+        
+        # 3. 修复多个连续逗号
+        json_str = re.sub(r',\s*,', ',', json_str)
+        
+        return json_str
+    
+    def _fix_latex_escapes(self, json_str: str) -> str:
+        """
+        修复 JSON 字符串中 LaTeX 公式的转义问题
+        
+        LaTeX 公式中的反斜杠（如 \vec, \frac）在 JSON 字符串中需要转义为 \\
+        问题：LLM 生成的 JSON 中，LaTeX 命令如 \vec 没有转义，导致 JSON 解析失败
+        
+        策略：逐字符扫描，找到字符串值中的 LaTeX 命令并转义
+        
+        Args:
+            json_str: JSON 字符串
+        
+        Returns:
+            修复后的 JSON 字符串
+        """
+        import re
+        
+        # 匹配 JSON 字符串值（"..."），包括转义的引号和反斜杠
+        def fix_string_with_latex(match):
+            """修复字符串值中的 LaTeX 转义"""
+            full_match = match.group(0)
+            content = match.group(1)  # 字符串内容（不包括引号）
+            
+            # 如果内容中不包含 $，说明可能没有 LaTeX，直接返回
+            if '$' not in content:
+                return full_match
+            
+            # 逐字符处理，修复 LaTeX 命令
+            result = []
+            i = 0
+            while i < len(content):
+                char = content[i]
+                
+                # 如果遇到反斜杠
+                if char == '\\':
+                    # 检查下一个字符
+                    if i + 1 < len(content):
+                        next_char = content[i + 1]
+                        
+                        # 如果下一个字符是字母（LaTeX 命令），需要转义
+                        if next_char.isalpha():
+                            # 检查前面是否已经是转义的反斜杠
+                            # 在原始字符串中，如果前一个字符也是 \，说明已经是转义的
+                            if i > 0 and content[i - 1] == '\\':
+                                # 已经是转义的（在原始字符串中是 \\），保持不变
+                                result.append(char)
+                                result.append(next_char)
+                            else:
+                                # 需要转义：添加额外的反斜杠
+                                # 在 JSON 字符串中，\\ 表示单个反斜杠
+                                result.append('\\\\')
+                                result.append(next_char)
+                            i += 2
+                            continue
+                        else:
+                            # 不是 LaTeX 命令（可能是转义序列如 \n, \t），保持原样
+                            result.append(char)
+                            result.append(next_char)
+                            i += 2
+                            continue
+                    else:
+                        # 反斜杠在末尾，保持原样
+                        result.append(char)
+                else:
+                    result.append(char)
+                
+                i += 1
+            
+            fixed_content = ''.join(result)
+            return f'"{fixed_content}"'
+        
+        # 匹配 JSON 字符串值（包括转义的引号）
+        # 模式：匹配 "..." 中的内容，处理转义的字符
+        pattern = r'"((?:[^"\\]|\\.)*)"'
+        
+        fixed_json = re.sub(pattern, fix_string_with_latex, json_str)
+        
+        return fixed_json
     
     def _smart_fix_truncated_json(
         self,
@@ -1136,12 +1921,13 @@ class SkillOrchestrator:
         session_id: str
     ) -> Dict[str, Any]:
         """
-        构建技能执行所需的上下文
+        🆕 构建技能执行所需的上下文（智能加载）
         
         包括：
         1. 用户画像和会话上下文
         2. 最近的 artifacts（用于上下文连续性）
         3. Memory summary（行为总结）
+        4. 🆕 Conversation Session Context（长期记忆，智能压缩）
         
         Args:
             skill: Skill 定义
@@ -1167,16 +1953,31 @@ class SkillOrchestrator:
             try:
                 recent_artifacts = []
                 if session_context.artifact_history:
-                    # 获取最近的 3 个 artifacts
-                    recent_artifact_ids = session_context.artifact_history[-3:]
+                    # 🔍 调试：查看 artifact_history 内容
+                    logger.info(f"🔍 Total artifacts in history: {len(session_context.artifact_history)}")
+                    for idx, record in enumerate(session_context.artifact_history):
+                        logger.debug(f"  [{idx}] {record.artifact_id[:50]}... | {record.topic} | {len(str(record.content)) if record.content else 0} chars")
                     
-                    for artifact_id in recent_artifact_ids:
-                        artifact_content = await self.memory_manager.get_artifact(artifact_id)
-                        if artifact_content:
+                    # 获取最近的 2 个 artifact records (限制为2避免prompt过大)
+                    recent_artifact_records = session_context.artifact_history[-2:]
+                    
+                    for artifact_record in recent_artifact_records:
+                        # 🆕 使用 summary（压缩摘要）作为 LLM 上下文
+                        # content 保留原始完整数据，供 reference_resolver 使用
+                        summary_str = artifact_record.summary if artifact_record.summary else ""
+                        summary_size = len(summary_str)
+                        
+                        if summary_str:
                             recent_artifacts.append({
-                                "artifact_id": artifact_id,
-                                "content": artifact_content
+                                "artifact_id": artifact_record.artifact_id,
+                                "topic": artifact_record.topic,
+                                "type": artifact_record.artifact_type,
+                                "summary": artifact_record.summary,  # 用于 LLM 上下文
+                                # 🆕 不再传 content 给 LLM（太大），只传 summary
                             })
+                            logger.info(f"📄 Loaded artifact: {artifact_record.topic} ({artifact_record.artifact_type}, {summary_size} chars)")
+                        else:
+                            logger.warning(f"⚠️  Artifact {artifact_record.artifact_id} has no summary")
                 
                 context["recent_artifacts"] = recent_artifacts
                 logger.info(f"📚 Loaded {len(recent_artifacts)} recent artifacts for context")
@@ -1184,6 +1985,27 @@ class SkillOrchestrator:
             except Exception as e:
                 logger.warning(f"⚠️  Failed to load recent artifacts: {e}")
                 context["recent_artifacts"] = []
+        
+        # 🆕 加载 Conversation Session Context（长期记忆 + 智能压缩）
+        try:
+            session_mgr = self.memory_manager.get_conversation_session_manager(user_id)
+            
+            # 获取智能构建的 session context（包含继承 + 最近对话）
+            conversation_context = await session_mgr.get_session_context_for_llm(
+                include_recent_turns=5,  # 最近 5 轮
+                include_inherited=True   # 包含继承的 summary
+            )
+            
+            if conversation_context:
+                context["conversation_history"] = conversation_context
+                logger.debug(f"🗂️  Loaded conversation session context ({len(conversation_context)} chars)")
+            else:
+                context["conversation_history"] = ""
+                logger.debug("🗂️  No conversation history available")
+        
+        except Exception as e:
+            logger.warning(f"⚠️  Failed to load conversation session context: {e}")
+            context["conversation_history"] = ""
         
         # TODO: 如果需要 content_store，从知识库检索相关内容
         if skill.context.get("need_content_store", False):
@@ -1536,7 +2358,8 @@ class SkillOrchestrator:
             "subject": intent_result.parameters.get("subject") if intent_result.parameters else None,
             "topic": intent_result.topic,
             "difficulty": intent_result.parameters.get("difficulty", "medium") if intent_result.parameters else "medium",
-            "memory_summary": memory_summary.recent_behavior  # 🔧 使用 generate_memory_summary 结果
+            "memory_summary": memory_summary.recent_behavior,  # 🔧 使用 generate_memory_summary 结果
+            "language": additional_params.get("language", "auto") if additional_params else "auto"  # 🆕 传递语言偏好
         }
         
         # 🔥 将所有 intent parameters 合并到 user_input，确保 Plan Skill 可以访问所有提取的参数
@@ -1647,7 +2470,8 @@ class SkillOrchestrator:
         skill_id: str,
         input_params: Dict[str, Any],
         user_profile: Any,
-        session_context: Any
+        session_context: Any,
+        step_index: int = 1  # 🆕 步骤索引，用于智能选择 thinking 模式
     ):
         """
         🆕 流式执行单个skill（用于Plan Skill的每个步骤）
@@ -1657,6 +2481,11 @@ class SkillOrchestrator:
             input_params: 输入参数
             user_profile: 用户画像
             session_context: 会话上下文
+            step_index: 步骤索引（1=第一步，2+=后续步骤）
+        
+        Thinking 模式选择逻辑：
+            - 第一步 (explain_skill) → 真思考 (Kimi)，深度理解核心概念
+            - 后续步骤 (flashcard/quiz/notes/mindmap) → 伪思考 (Gemini)，快速生成
         
         Yields:
             Dict: 流式事件
@@ -1678,20 +2507,38 @@ class SkillOrchestrator:
         }
         full_prompt = self._format_prompt(prompt_content, input_params, context)
         
-        # 流式调用Kimi
+        # 🔥 智能选择 Thinking 模式
+        # 
+        # 判断条件：
+        # 1. 第一步 (step_index == 1) 且 session 中没有该 topic 的 artifact → 真思考
+        # 2. 后续步骤或已有上下文 → 伪思考
+        #
+        # 这样无论 Plan Skill 的步骤顺序如何（可能是 flashcard + quiz，没有 explain），
+        # 第一步都会用真思考来理解 topic，后续步骤用伪思考基于已有内容快速生成
+        
+        # 检查 session 中是否已有该 topic 的 artifact
+        topic = input_params.get("topic", "")
+        has_existing_context = False
+        if session_context and hasattr(session_context, 'artifact_history'):
+            for artifact in session_context.artifact_history:
+                if artifact.topic == topic:
+                    has_existing_context = True
+                    break
+        
+        # 🔧 临时配置：全部使用 Gemini（关闭 Kimi）
+        
         thinking_accumulated = []
         content_accumulated = []
         
-        # 获取 thinking_budget（优先使用 skill 配置）
-        thinking_budget = getattr(skill, 'thinking_budget', 64)
-        logger.info(f"🎯 Executing sub-skill: {skill_id}, thinking_budget={thinking_budget}")
+        # ⚡ 全部使用 Gemini（快速稳定）
+        logger.info(f"⚡ Executing sub-skill: {skill_id} (Step {step_index}, topic='{topic}' → Gemini)")
         
         async for chunk in self.gemini_client.generate_stream(
             prompt=full_prompt,
-            model=getattr(skill, 'models', {}).get('primary', 'moonshotai/kimi-k2-thinking'),
-            thinking_budget=thinking_budget,
+            model="gemini-2.5-flash",
+            thinking_budget=0,  # 🔧 禁用思考以确保完整输出
             buffer_size=1,
-            temperature=getattr(skill, 'temperature', 1.0)
+            temperature=getattr(skill, 'temperature', 0.7)
         ):
             # 累积数据
             if chunk["type"] == "thinking":
@@ -1699,12 +2546,22 @@ class SkillOrchestrator:
             elif chunk["type"] == "content":
                 content_accumulated.append(chunk.get("text", ""))
             
-            # 转发chunk
-            yield chunk
+            # 🔥 转发 chunk（跳过 LLM 客户端的 done 事件，我们自己构建）
+            if chunk["type"] != "done":
+                yield chunk
         
         # 解析最终结果
         full_thinking = "".join(thinking_accumulated)
         full_content = "".join(content_accumulated)
+        
+        # 🔥 检查是否有实际内容（LLM 可能把所有 token 花在 thinking 上）
+        if not full_content or len(full_content.strip()) < 10:
+            logger.error(f"❌ No content generated (content: {len(full_content)} chars, thinking: {len(full_thinking)} chars)")
+            yield {
+                "type": "error",
+                "message": "LLM 生成内容为空（可能 thinking 消耗了所有 token），请重试"
+            }
+            return
         
         # 提取JSON
         json_str = full_content
@@ -1719,16 +2576,53 @@ class SkillOrchestrator:
             except:
                 pass
         
+        # 🔧 Step 1: 清理常见格式问题
+        json_str = self._clean_json_string(json_str)
+        
+        # 🔧 Step 2: 修复 LaTeX 公式中的转义问题
+        json_str = self._fix_latex_escapes(json_str)
+        
         # 解析JSON
+        parsed_content = None
         try:
             parsed_content = json.loads(json_str)
+            logger.info(f"✅ JSON parsed successfully (sub-skill)")
         except json.JSONDecodeError as e:
             logger.error(f"❌ Failed to parse JSON: {e}")
-            yield {
-                "type": "error",
-                "message": "生成内容格式错误，请重试"
-            }
-            return
+            logger.error(f"Content preview: {json_str[:200]}...")
+            
+            # 🔧 智能修复截断的 JSON
+            if "Unterminated string" in str(e) or "Expecting" in str(e):
+                logger.warning(f"⚠️  JSON appears malformed, attempting smart fix...")
+                
+                # 策略 1: 智能检测并修复
+                parsed_content = self._smart_fix_truncated_json(json_str, e)
+                
+                # 策略 2: 暴力修复（如果智能修复失败）
+                if parsed_content is None:
+                    logger.warning(f"⚠️  Smart fix failed, trying brute force...")
+                    fixed_attempts = [
+                        json_str + '"}',       # 缺少引号和花括号
+                        json_str + '"]}}',     # 数组+对象
+                        json_str + '"}}',      # 字符串+对象
+                        json_str + '}}',       # 对象
+                        json_str + ']}}',      # 数组+对象
+                    ]
+                    
+                    for i, attempt in enumerate(fixed_attempts):
+                        try:
+                            parsed_content = json.loads(attempt)
+                            logger.info(f"✅ JSON fixed (brute force attempt {i+1})")
+                            break
+                        except:
+                            continue
+            
+            if parsed_content is None:
+                yield {
+                    "type": "error",
+                    "message": "生成内容格式错误，请重试"
+                }
+                return
         
         # 检测content_type
         content_type = "unknown"
@@ -1736,7 +2630,7 @@ class SkillOrchestrator:
             content_type = "quiz_set"
         elif "concept" in parsed_content:
             content_type = "explanation"
-        elif "card_set_id" in parsed_content or "cards" in parsed_content:
+        elif "cardList" in parsed_content or "card_set_id" in parsed_content or "cards" in parsed_content:
             content_type = "flashcard_set"
         elif "structured_notes" in parsed_content:
             content_type = "notes"
@@ -1762,15 +2656,19 @@ class SkillOrchestrator:
         self,
         skill: SkillDefinition,
         params: Dict[str, Any],
-        context: Dict[str, Any]
+        context: Dict[str, Any],
+        client: Optional[Any] = None,
+        thinking_config: Optional[Dict[str, Any]] = None
     ) -> Dict[str, Any]:
         """
-        执行技能（调用 Gemini API）- 🆕 支持思考模型
+        执行技能 - 🆕 支持智能思考模式选择
         
         Args:
             skill: Skill 定义
             params: 输入参数
             context: 上下文
+            client: LLM 客户端（可选，如果未提供则使用默认）
+            thinking_config: 思考模式配置（可选）
         
         Returns:
             Dict[str, Any]: 包含以下键：
@@ -1778,29 +2676,482 @@ class SkillOrchestrator:
                 - "thinking": 思考过程（如果有）
                 - "usage": Token 使用统计
         """
+        # 🔥 flashcard_skill 特殊处理：调用外部 API（带 fallback）
+        if skill.id == 'flashcard_skill':
+            try:
+                result = await self._execute_flashcard_via_external_api(params, context)
+                # 检查是否有错误
+                content = json.loads(result.get("content", "{}"))
+                if not content.get("error"):
+                    return result
+                logger.warning(f"⚠️ External flashcard API returned error, falling back to LLM")
+            except Exception as e:
+                logger.warning(f"⚠️ External flashcard API failed: {e}, falling back to LLM")
+            # Fallback: 继续执行 LLM 流程
+        
+        # 🔥 quiz_skill 特殊处理：调用外部 API（带 fallback）
+        if skill.id == 'quiz_skill':
+            try:
+                result = await self._execute_quiz_via_external_api(params, context)
+                # 检查是否有错误
+                content = json.loads(result.get("content", "{}"))
+                if not content.get("error"):
+                    return result
+                logger.warning(f"⚠️ External quiz API returned error, falling back to LLM")
+            except Exception as e:
+                logger.warning(f"⚠️ External quiz API failed: {e}, falling back to LLM")
+            # Fallback: 继续执行 LLM 流程
+        
         # 加载 prompt 模板
         prompt_content = self._load_prompt(skill)
         
         # 构建完整 prompt
         full_prompt = self._format_prompt(prompt_content, params, context)
         
-        # 调用 Gemini
-        model = skill.models.get("primary", "gemini-2.5-flash-lite")  # 🆕 使用 2.5 Flash Lite
-        thinking_budget = skill.thinking_budget or 1024  # 🆕 从 skill 配置读取
+        # 🆕 使用提供的客户端或默认客户端
+        active_client = client or self.llm_client
         
-        logger.debug(f"🤖 Calling Gemini model: {model} (thinking_budget={thinking_budget})")
+        # 🆕 使用思考配置或默认配置
+        if thinking_config:
+            model = thinking_config["model"]
+            thinking_budget = thinking_config.get("thinking_budget")
+            temperature = thinking_config.get("temperature", 1.0)
+        else:
+            model = skill.models.get("primary", self.llm_client.model)
+            thinking_budget = skill.thinking_budget or 32
+            temperature = getattr(skill, 'temperature', 1.0)
+        
+        # 🆕 从 params 获取 max_tokens，默认 4000（避免复杂回答被截断）
+        max_tokens = params.get('max_tokens', 4000)
+        
+        logger.debug(f"🤖 Calling LLM: {model} (thinking_budget={thinking_budget}, temp={temperature}, max_tokens={max_tokens})")
         
         # 🆕 使用 generate 方法（返回字典）
-        response = await self.gemini_client.generate(
+        response = await active_client.generate(
             prompt=full_prompt,
             model=model,
             response_format="json",
             thinking_budget=thinking_budget,
-            return_thinking=True
+            return_thinking=True,
+            temperature=temperature,
+            max_tokens=max_tokens  # 🆕 增加 token 限制，避免截断
         )
         
         # response 是字典: {"content": str, "thinking": str, "usage": dict}
         return response
+    
+    async def _execute_flashcard_via_external_api(
+        self,
+        params: Dict[str, Any],
+        context: Dict[str, Any]
+    ) -> Dict[str, Any]:
+        """
+        🔥 通过外部 API 生成闪卡（替代 LLM 调用）
+        
+        仅当有丰富内容时调用：
+        - reference_explanation: 前面的解释内容
+        - referenced_content: 用户引用的历史内容
+        - input_text: 用户提供的原始文本
+        
+        Args:
+            params: 输入参数（包含 topic, num_cards 等）
+            context: 上下文
+        
+        Returns:
+            Dict: {"content": str (JSON), "thinking": None, "usage": {}}
+        """
+        import json
+        from ..services.external_flashcard_service import get_external_flashcard_service
+        
+        # 获取外部服务
+        external_service = get_external_flashcard_service()
+        
+        # 提取参数
+        topic = params.get('topic', '')
+        # num_cards: 用户指定的数量，None 表示让 API 自动决定
+        num_cards = params.get('num_cards')  # 不设默认值，让 API 自动决定
+        
+        # 构建输入文本 - 按优先级选择内容源
+        input_text = ""
+        content_source = ""
+        
+        # 1. 优先使用 reference_explanation（前面的解释内容）
+        if params.get('reference_explanation'):
+            ref = params['reference_explanation']
+            if isinstance(ref, dict):
+                # 从解释内容中提取文本
+                parts = []
+                if ref.get('intuition'):
+                    parts.append(ref['intuition'])
+                if ref.get('deep_dive'):
+                    parts.append(ref['deep_dive'])
+                if ref.get('examples'):
+                    for ex in ref['examples'][:2]:  # 取前2个例子
+                        if isinstance(ex, dict):
+                            parts.append(ex.get('description', ''))
+                        else:
+                            parts.append(str(ex))
+                input_text = " ".join(parts)
+            else:
+                input_text = str(ref)
+            content_source = "reference_explanation"
+        
+        # 2. 其次使用 referenced_content（用户引用的历史内容）
+        elif params.get('referenced_content'):
+            input_text = params['referenced_content']
+            content_source = "referenced_content"
+        
+        # 3. 使用 input_text（用户提供的原始文本）
+        elif params.get('input_text'):
+            input_text = params['input_text']
+            content_source = "input_text"
+        
+        # 🆕 获取 file_uris（多文件附件）
+        file_uris = params.get('file_uris', [])
+        file_uri = params.get('file_uri')  # 兼容旧逻辑
+        from_file = params.get('from_file', False)
+        
+        # 4. Fallback: 使用 topic（但这种情况不应该走外部 API）
+        has_files = (file_uris and len(file_uris) > 0) or file_uri
+        if not input_text.strip():
+            if has_files:
+                # 🆕 有文件时，使用简单指令让外部 API 处理
+                file_count = len(file_uris) if file_uris else 1
+                input_text = f"根据{file_count}个文件的内容生成闪卡"
+                content_source = "file_based"
+            else:
+                input_text = topic
+                content_source = "topic_only"
+        
+        # 🆕 获取语言设置
+        language = params.get('language', 'auto')
+        # 语言映射：将内部语言代码映射到外部 API 支持的格式（支持 30+ 语言）
+        lang_map = {
+            'auto': None,  # None 表示让 API 自动检测
+            'en': 'English',
+            'zh': 'Chinese',
+            'zh-CN': 'Chinese',
+            'zh-TW': 'Traditional Chinese',
+            'ja': 'Japanese',
+            'ko': 'Korean',
+            'fr': 'French',
+            'es': 'Spanish',
+            'pt': 'Portuguese',
+            'de': 'German',
+            'it': 'Italian',
+            'ru': 'Russian',
+            'vi': 'Vietnamese',
+            'th': 'Thai',
+            'hi': 'Hindi',
+            'id': 'Indonesian',
+            'ms': 'Malay',
+            'tr': 'Turkish',
+            'pl': 'Polish',
+            'nl': 'Dutch',
+            'ro': 'Romanian',
+            'cs': 'Czech',
+            'sk': 'Slovak',
+            'hu': 'Hungarian',
+            'tl': 'Filipino',
+            'no': 'Norwegian',
+            'da': 'Danish',
+            'fi': 'Finnish',
+        }
+        output_language = lang_map.get(language, None)
+        
+        logger.info(f"🌐 Executing flashcard via external API: topic='{topic}', num_cards={num_cards}, source={content_source}, input_len={len(input_text)}, file_uris={file_uris if file_uris else 'N/A'}, language={language}→{output_language}")
+        
+        try:
+            # 调用外部 API（传递多文件）
+            result = await external_service.create_flashcards(
+                text=input_text,
+                card_size=num_cards,
+                output_language=output_language,  # 🆕 使用用户语言偏好
+                file_uri=file_uri,  # 兼容旧逻辑
+                file_uris=file_uris  # 🆕 传递多文件 URI 列表
+            )
+            
+            # 🆕 外部 API 可能忽略 cardSize，手动截取到用户指定数量
+            if num_cards and 'cardList' in result:
+                actual_count = len(result['cardList'])
+                if actual_count > num_cards:
+                    logger.info(f"✂️ Trimming flashcards: API returned {actual_count}, user requested {num_cards}")
+                    result['cardList'] = result['cardList'][:num_cards]
+            
+            # 返回格式与 LLM 调用一致
+            return {
+                "content": json.dumps(result, ensure_ascii=False),
+                "thinking": None,
+                "usage": {"external_api": True}
+            }
+            
+        except Exception as e:
+            logger.error(f"❌ External flashcard API failed: {e}")
+            # 返回错误格式
+            error_result = {
+                "title": f"生成失败: {topic}",
+                "cardList": [],
+                "error": str(e)
+            }
+            return {
+                "content": json.dumps(error_result, ensure_ascii=False),
+                "thinking": None,
+                "usage": {"external_api": True, "error": str(e)}
+            }
+    
+    async def _execute_quiz_via_external_api(
+        self,
+        params: Dict[str, Any],
+        context: Dict[str, Any]
+    ) -> Dict[str, Any]:
+        """
+        🔥 通过外部 API 生成测验题目（替代 LLM 调用）
+        
+        Args:
+            params: 输入参数（包含 topic, num_questions 等）
+            context: 上下文
+        
+        Returns:
+            Dict: {"content": str (JSON), "thinking": None, "usage": {}}
+        """
+        from ..services.external_quiz_service import get_external_quiz_service
+        
+        # 获取外部服务
+        external_service = get_external_quiz_service()
+        
+        # 提取参数
+        topic = params.get('topic', '')
+        # num_questions: 用户指定的数量，None 表示让 API 自动决定
+        num_questions = params.get('num_questions')
+        
+        # 构建输入文本 - 按优先级选择内容源
+        input_text = ""
+        content_source = ""
+        
+        # 1. 优先使用 reference_explanation（前面的解释内容）
+        if params.get('reference_explanation'):
+            ref = params['reference_explanation']
+            if isinstance(ref, dict):
+                parts = []
+                if ref.get('intuition'):
+                    parts.append(ref['intuition'])
+                if ref.get('deep_dive'):
+                    parts.append(ref['deep_dive'])
+                if ref.get('examples'):
+                    for ex in ref['examples'][:2]:
+                        if isinstance(ex, dict):
+                            parts.append(ex.get('description', ''))
+                        else:
+                            parts.append(str(ex))
+                input_text = " ".join(parts)
+            else:
+                input_text = str(ref)
+            content_source = "reference_explanation"
+        
+        # 2. 其次使用 referenced_content（用户引用的历史内容）
+        elif params.get('referenced_content'):
+            input_text = params['referenced_content']
+            content_source = "referenced_content"
+        
+        # 3. 使用 input_text（用户提供的原始文本）
+        elif params.get('input_text'):
+            input_text = params['input_text']
+            content_source = "input_text"
+        
+        # 🆕 获取 file_uris（多文件附件）
+        file_uris = params.get('file_uris', [])
+        file_uri = params.get('file_uri')  # 兼容旧逻辑
+        from_file = params.get('from_file', False)
+        
+        # 4. Fallback: 使用 topic
+        has_files = (file_uris and len(file_uris) > 0) or file_uri
+        if not input_text.strip():
+            if has_files:
+                # 🆕 有文件时，使用简单指令让外部 API 处理
+                file_count = len(file_uris) if file_uris else 1
+                input_text = f"根据{file_count}个文件的内容出题"
+                content_source = "file_based"
+            else:
+                input_text = topic
+                content_source = "topic_only"
+        
+        # 🆕 获取语言设置
+        language = params.get('language', 'auto')
+        # 语言映射：将内部语言代码映射到外部 API 支持的格式（支持 30+ 语言）
+        lang_map = {
+            'auto': None,  # None 表示让 API 自动检测
+            'en': 'English',
+            'zh': 'Chinese',
+            'zh-CN': 'Chinese',
+            'zh-TW': 'Traditional Chinese',
+            'ja': 'Japanese',
+            'ko': 'Korean',
+            'fr': 'French',
+            'es': 'Spanish',
+            'pt': 'Portuguese',
+            'de': 'German',
+            'it': 'Italian',
+            'ru': 'Russian',
+            'vi': 'Vietnamese',
+            'th': 'Thai',
+            'hi': 'Hindi',
+            'id': 'Indonesian',
+            'ms': 'Malay',
+            'tr': 'Turkish',
+            'pl': 'Polish',
+            'nl': 'Dutch',
+            'ro': 'Romanian',
+            'cs': 'Czech',
+            'sk': 'Slovak',
+            'hu': 'Hungarian',
+            'tl': 'Filipino',
+            'no': 'Norwegian',
+            'da': 'Danish',
+            'fi': 'Finnish',
+        }
+        output_language = lang_map.get(language, None)
+        
+        logger.info(f"🌐 Executing quiz via external API: topic='{topic}', num_questions={num_questions}, source={content_source}, input_len={len(input_text)}, file_uris={file_uris if file_uris else 'N/A'}, language={language}→{output_language}")
+        
+        try:
+            # 调用外部 API（传递多文件）
+            result = await external_service.create_quiz(
+                text=input_text,
+                question_count=num_questions,
+                output_language=output_language,  # 🆕 使用用户语言偏好
+                file_uri=file_uri,  # 兼容旧逻辑
+                file_uris=file_uris  # 🆕 传递多文件 URI 列表
+            )
+            
+            # 🆕 外部 API 可能忽略 questionCount，手动截取到用户指定数量
+            if num_questions and 'questions' in result:
+                actual_count = len(result['questions'])
+                if actual_count > num_questions:
+                    logger.info(f"✂️ Trimming quiz: API returned {actual_count}, user requested {num_questions}")
+                    result['questions'] = result['questions'][:num_questions]
+            
+            # 返回格式与 LLM 调用一致
+            return {
+                "content": json.dumps(result, ensure_ascii=False),
+                "thinking": None,
+                "usage": {"external_api": True}
+            }
+            
+        except Exception as e:
+            logger.error(f"❌ External quiz API failed: {e}")
+            # 返回错误格式
+            error_result = {
+                "title": f"生成失败: {topic}",
+                "questions": [],
+                "error": str(e)
+            }
+            return {
+                "content": json.dumps(error_result, ensure_ascii=False),
+                "thinking": None,
+                "usage": {"external_api": True, "error": str(e)}
+            }
+    
+    def _generate_context_preview(
+        self,
+        context: Dict[str, Any],
+        params: Dict[str, Any],
+        thinking_mode: str
+    ) -> Optional[Dict[str, Any]]:
+        """
+        🆕 生成上下文预览信息（让用户知道基于什么来生成）
+        
+        Args:
+            context: 上下文字典
+            params: 参数字典
+            thinking_mode: 思考模式 ("real_thinking" / "fake_thinking")
+        
+        Returns:
+            预览信息字典，包含 message 和 details
+        """
+        details = []
+        
+        # 1. 提取主题
+        topic = params.get("topic", "")
+        if topic:
+            details.append(f"📚 主题：{topic}")
+        
+        # 2. 提取引用内容摘要（清理 LaTeX）
+        if params.get("referenced_content"):
+            ref_content = params["referenced_content"]
+            # 清理 LaTeX 和特殊符号
+            ref_preview = self._clean_for_display(ref_content[:150])
+            details.append(f"📎 引用内容：{ref_preview}...")
+        
+        # 3. 提取历史上下文摘要
+        recent_artifacts = context.get("recent_artifacts", [])
+        if recent_artifacts:
+            # 只显示最近 2 个
+            for artifact in recent_artifacts[:2]:
+                artifact_topic = artifact.get("topic", "")
+                artifact_type = artifact.get("type", "")
+                # 类型中文映射
+                type_map = {
+                    "explanation": "概念讲解",
+                    "quiz_set": "练习题",
+                    "flashcard_set": "闪卡",
+                    "mindmap": "思维导图",
+                    "notes": "笔记"
+                }
+                type_cn = type_map.get(artifact_type, artifact_type)
+                
+                # 获取摘要并清理
+                summary = artifact.get("summary", "")
+                if summary:
+                    summary_preview = self._clean_for_display(summary[:80])
+                    details.append(f"📄 {artifact_topic}({type_cn})：{summary_preview}...")
+        
+        # 4. 生成主消息
+        if not details:
+            return None  # 没有上下文，不显示预览
+        
+        # 根据思考模式选择提示语
+        if thinking_mode == "real_thinking":
+            message = "🧠 深度分析中，基于以下上下文..."
+        else:
+            message = "⚡ 快速生成中，基于以下上下文..."
+        
+        return {
+            "message": message,
+            "details": details
+        }
+    
+    def _clean_for_display(self, text: str) -> str:
+        """
+        清理文本用于显示（移除 LaTeX、特殊符号等）
+        
+        Args:
+            text: 原始文本
+        
+        Returns:
+            清理后的文本
+        """
+        import re
+        
+        if not text:
+            return ""
+        
+        # 移除 LaTeX 公式 $...$ 和 $$...$$
+        text = re.sub(r'\$\$[^$]+\$\$', '[公式]', text)
+        text = re.sub(r'\$[^$]+\$', '[公式]', text)
+        
+        # 移除 LaTeX 命令 \xxx{...}
+        text = re.sub(r'\\[a-zA-Z]+\{[^}]*\}', '', text)
+        text = re.sub(r'\\[a-zA-Z]+', '', text)
+        
+        # 移除 JSON 特殊字符
+        text = text.replace('{', '').replace('}', '')
+        text = text.replace('[', '').replace(']', '')
+        text = text.replace('"', '').replace("'", '')
+        
+        # 移除多余空白
+        text = ' '.join(text.split())
+        
+        return text.strip()
     
     def _load_prompt(self, skill: SkillDefinition) -> str:
         """
@@ -1830,7 +3181,9 @@ class SkillOrchestrator:
         context: Dict[str, Any]
     ) -> str:
         """
-        格式化 Prompt（将参数填入模板）
+        格式化 Prompt（直接拼接模板和参数 JSON）
+        
+        新版 Prompt 不再使用占位符，而是直接通过 JSON 传递参数
         
         Args:
             prompt_template: Prompt 模板
@@ -1842,25 +3195,8 @@ class SkillOrchestrator:
         """
         import json
         
-        # 🔥 Step 1: 替换 prompt 模板中的占位符
-        # 准备格式化参数（包括 JSON 序列化）
-        format_params = {}
-        for k, v in params.items():
-            if v is None:
-                format_params[k] = ""  # None 替换为空字符串
-            elif isinstance(v, (dict, list)):
-                # 字典和列表序列化为 JSON
-                format_params[k] = json.dumps(v, ensure_ascii=False, indent=2)
-            else:
-                format_params[k] = str(v)
-        
-        # 替换模板中的占位符
-        try:
-            formatted = prompt_template.format(**format_params)
-        except KeyError as e:
-            # 如果有缺失的参数，记录警告并使用原模板
-            logger.warning(f"⚠️  Prompt 模板缺少参数: {e}")
-            formatted = prompt_template
+        # 新版 Prompt 不使用占位符，直接使用原模板
+        formatted = prompt_template
         
         # 🔥 Step 2: 附加参数 JSON（作为备用/调试信息）
         # 过滤掉 None 值和不可序列化的对象
@@ -1882,6 +3218,100 @@ class SkillOrchestrator:
 ```json
 {params_json}
 ```
+"""
+        
+        # 🆕 添加语言指令（如果有 language 参数）
+        language = params.get('language', 'auto')
+        if language and language != 'auto':
+            # 语言代码到语言名称的映射
+            LANGUAGE_NAMES = {
+                "en": "English",
+                "zh": "Simplified Chinese (简体中文)",
+                "zh-CN": "Simplified Chinese (简体中文)",
+                "zh-TW": "Traditional Chinese (繁體中文)",
+                "ja": "Japanese (日本語)",
+                "ko": "Korean (한국어)",
+                "fr": "French (Français)",
+                "es": "Spanish (Español)",
+                "pt": "Portuguese (Português)",
+                "de": "German (Deutsch)",
+                "it": "Italian (Italiano)",
+                "ru": "Russian (Русский)",
+                "vi": "Vietnamese (Tiếng Việt)",
+                "th": "Thai (ภาษาไทย)",
+                "hi": "Hindi (हिंदी)",
+                "id": "Indonesian (Bahasa Indonesia)",
+                "ms": "Malay (Melayu)",
+                "tr": "Turkish (Türkçe)",
+                "pl": "Polish (Polski)",
+                "nl": "Dutch (Nederlands)",
+                "ro": "Romanian (Română)",
+                "cs": "Czech (Čeština)",
+                "sk": "Slovak (Slovenčina)",
+                "hu": "Hungarian (Magyar)",
+                "tl": "Filipino/Tagalog",
+                "no": "Norwegian (Norsk)",
+                "da": "Danish (Dansk)",
+                "fi": "Finnish (Suomi)",
+            }
+            target_language = LANGUAGE_NAMES.get(language, language)
+            formatted += f"""
+
+## ⚠️ LANGUAGE REQUIREMENT
+
+**CRITICAL**: You MUST respond in **{target_language}** only. All text content in your response must be in {target_language}. This is a strict requirement.
+"""
+            logger.info(f"🌐 Added language instruction: {target_language}")
+        
+        # 🆕 Step 2.5: 附加引用内容（如果有）
+        if "referenced_content" in params and params["referenced_content"]:
+            formatted += f"""
+
+## Referenced Content (用户引用的历史内容)
+
+用户消息中引用了以下历史内容，请在生成响应时基于这些内容：
+
+{params["referenced_content"]}
+"""
+            logger.info(f"📎 Added referenced content to prompt (~{len(params['referenced_content'])} chars)")
+        
+        # 🔥 Step 3: 附加上下文信息（上下文卸载的关键！）
+        if context:
+            # 添加 recent artifacts（压缩的历史上下文）
+            if "recent_artifacts" in context and context["recent_artifacts"]:
+                artifacts_summary = []
+                for artifact in context["recent_artifacts"]:
+                    # 🆕 只使用 summary（压缩摘要），不传 content（完整数据太大）
+                    artifacts_summary.append({
+                        "topic": artifact.get("topic"),
+                        "type": artifact.get("type"),
+                        "summary": artifact.get("summary")  # 压缩的上下文摘要
+                    })
+                
+                artifacts_json = json.dumps(artifacts_summary, ensure_ascii=False, indent=2)
+                formatted += f"""
+
+## Previous Learning Context (Compressed)
+
+The user has previously learned the following topics. Use this context to maintain continuity and avoid repetition:
+
+```json
+{artifacts_json}
+```
+"""
+                logger.info(f"📦 Added {len(artifacts_summary)} artifact summaries to prompt (~{len(artifacts_json)} chars)")
+            
+            # 添加 conversation history（如果有）
+            if "conversation_history" in context and context["conversation_history"]:
+                formatted += f"""
+
+## Recent Conversation
+
+{context["conversation_history"][:1000]}  
+"""
+                logger.debug(f"💬 Added conversation history to prompt")
+        
+        formatted += """
 
 Please respond with valid JSON according to the output schema defined above.
 """
@@ -1920,7 +3350,7 @@ Please respond with valid JSON according to the output schema defined above.
             content_type = "quiz_set"
         elif "concept" in result or "explanation" in result:
             content_type = "explanation"
-        elif "flashcard_set_id" in result or "cards" in result:
+        elif "cardList" in result or "flashcard_set_id" in result or "cards" in result:
             content_type = "flashcard_set"
         elif "notes_id" in result or "structured_notes" in result:
             content_type = "notes"
@@ -1973,19 +3403,44 @@ Please respond with valid JSON according to the output schema defined above.
             # 更新会话上下文
             session_context = await self.memory_manager.get_session_context(session_id)
             
-            # 🆕 更新当前主题（只有当有明确主题时）
-            #     简单策略：如果 topic 不为 None 且长度>=3，就认为是明确主题
-            #     无需硬编码的 invalid_topics 列表，让规则引擎/LLM 决定
-            topic = intent_result.topic
-            if topic and len(topic) >= 3:
+            # 🆕 优先从 skill_result 中提取实际 topic（API 返回的）
+            # 如果 skill_result 没有，再使用 intent_result.topic
+            topic = None
+            
+            # 1. 尝试从 skill_result 中提取 topic
+            if skill_result:
+                # Quiz/Flashcard: title 字段
+                if skill_result.get('title'):
+                    topic = skill_result.get('title')
+                    logger.info(f"📤 Extracted topic from skill_result.title: '{topic}'")
+                # Explanation: concept 或 subject 字段
+                elif skill_result.get('concept'):
+                    topic = skill_result.get('concept')
+                    logger.info(f"📤 Extracted topic from skill_result.concept: '{topic}'")
+                elif skill_result.get('subject'):
+                    topic = skill_result.get('subject')
+                    logger.info(f"📤 Extracted topic from skill_result.subject: '{topic}'")
+                # Learning Bundle: topic 字段
+                elif skill_result.get('topic'):
+                    topic = skill_result.get('topic')
+                    logger.info(f"📤 Extracted topic from skill_result.topic: '{topic}'")
+            
+            # 2. Fallback: 使用 intent_result.topic（但排除无效的 topic）
+            invalid_topics = {"文件内容", "这文件 内容", "附件内容", "文件", "附件", "None", ""}
+            if not topic or topic in invalid_topics:
+                intent_topic = intent_result.topic
+                if intent_topic and intent_topic not in invalid_topics and len(intent_topic) >= 3:
+                    topic = intent_topic
+                    logger.info(f"📤 Using intent_result.topic: '{topic}'")
+                else:
+                    # 3. Fallback: 使用 session current_topic
+                    topic = session_context.current_topic or "未知主题"
+                    logger.info(f"📤 Fallback to session current_topic: '{topic}'")
+            
+            # 更新 session 的 current_topic
+            if topic and topic not in invalid_topics and len(topic) >= 3:
                 session_context.current_topic = topic
                 logger.info(f"✅ Updated current_topic to: {topic}")
-            elif topic:
-                logger.info(f"⏭️  Topic too short ({len(topic)} chars), keeping current_topic: {session_context.current_topic}")
-                # 使用 current_topic 作为 fallback
-                topic = session_context.current_topic
-            else:
-                topic = session_context.current_topic or "未知主题"
             
             # 添加意图到历史
             intent = intent_result.intent
@@ -2065,17 +3520,12 @@ Please respond with valid JSON according to the output schema defined above.
             seen_topics = set()
             
             # 倒序遍历（最近的优先）
-            for artifact_id in reversed(session_context.artifact_history[-10:]):  # 最近10个
-                # artifact_id 格式: artifact_{type}_{topic}_{timestamp}
-                parts = artifact_id.split('_')
-                if len(parts) >= 3:
-                    # 提取 topic（可能包含多个部分）
-                    topic_parts = parts[2:-1]  # 排除 type 和 timestamp
-                    if topic_parts:
-                        topic = '_'.join(topic_parts)
-                        if topic and topic not in seen_topics and topic != "未知主题":
-                            topics.append(topic)
-                            seen_topics.add(topic)
+            for artifact_record in reversed(session_context.artifact_history[-10:]):  # 最近10个
+                # 🔥 直接使用 artifact_record.topic
+                topic = artifact_record.topic
+                if topic and topic not in seen_topics and topic != "未知主题":
+                    topics.append(topic)
+                    seen_topics.add(topic)
             
             logger.info(f"📚 Extracted {len(topics)} recent topics: {topics}")
             return topics
@@ -2083,6 +3533,59 @@ Please respond with valid JSON according to the output schema defined above.
         except Exception as e:
             logger.warning(f"⚠️ Failed to extract recent topics: {e}")
             return []
+    
+    def _extract_topic_from_result(self, skill_result: Dict[str, Any], fallback_topic: str = None) -> str:
+        """
+        从 skill_result 中提取实际 topic
+        
+        优先级：
+        1. skill_result.title (quiz/flashcard)
+        2. skill_result.concept (explanation)
+        3. skill_result.subject (explanation)
+        4. skill_result.topic (learning_bundle)
+        5. fallback_topic
+        
+        Args:
+            skill_result: 技能执行结果
+            fallback_topic: 后备 topic
+        
+        Returns:
+            提取的 topic
+        """
+        if not skill_result:
+            return fallback_topic or ""
+        
+        # 🆕 类型检查：如果 skill_result 是列表，尝试从第一个元素提取
+        if isinstance(skill_result, list):
+            if len(skill_result) > 0 and isinstance(skill_result[0], dict):
+                skill_result = skill_result[0]
+            else:
+                return fallback_topic or ""
+        
+        # 确保 skill_result 是字典
+        if not isinstance(skill_result, dict):
+            return fallback_topic or ""
+        
+        # 无效 topic 列表
+        invalid_topics = {"文件内容", "这文件 内容", "附件内容", "文件", "附件", "None", "", "N/A", "未知主题"}
+        
+        # 按优先级尝试提取
+        candidates = [
+            skill_result.get('title'),       # Quiz/Flashcard
+            skill_result.get('concept'),     # Explanation
+            skill_result.get('subject'),     # Explanation fallback
+            skill_result.get('topic'),       # Learning Bundle
+        ]
+        
+        for candidate in candidates:
+            if candidate and candidate not in invalid_topics and len(str(candidate)) >= 2:
+                return str(candidate)
+        
+        # 使用 fallback，但需要验证
+        if fallback_topic and fallback_topic not in invalid_topics and len(fallback_topic) >= 2:
+            return fallback_topic
+        
+        return ""
     
     def _create_error_response(self, error_type: str, message: str) -> Dict[str, Any]:
         """

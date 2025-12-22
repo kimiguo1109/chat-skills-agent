@@ -70,7 +70,10 @@ class ArtifactStorage:
         metadata: Optional[Dict[str, Any]] = None
     ) -> str:
         """
-        保存 step 结果（优先 S3，降级到本地）
+        保存 step 结果（只上传到 S3，不保存本地）
+        
+        注意：根据需求，step_artifact JSON 文件不需要本地保存，
+        因为详细内容已经在 MD 文件中了。只上传到 S3 用于云端备份。
         
         Args:
             session_id: Plan 执行的唯一 session ID 或 user session ID
@@ -81,12 +84,12 @@ class ArtifactStorage:
         Returns:
             引用字符串：
             - S3: "s3://bucket/user_xxx/step_001.json"
-            - Local: "user_xxx/step_001.json"
+            - 如果S3不可用: 返回空字符串（不保存本地）
             
         Raises:
-            IOError: 所有存储方式都失败时
+            IOError: S3 上传失败且无法降级时
         """
-        # 🎯 优先尝试 S3
+        # 🎯 只上传到 S3，不保存本地
         if self.use_s3:
             try:
                 # 提取 user_id
@@ -104,49 +107,17 @@ class ArtifactStorage:
                     logger.debug(f"💾 Saved to S3: {s3_uri}")
                     return s3_uri
                 else:
-                    logger.warning("⚠️  S3 upload returned None, falling back to local storage")
+                    logger.warning("⚠️  S3 upload returned None, skipping local storage (as per requirement)")
+                    # 返回空字符串，表示未保存（因为不需要本地保存）
+                    return ""
             except Exception as e:
-                logger.error(f"❌ S3 save error: {e}, falling back to local")
+                logger.error(f"❌ S3 save error: {e}, skipping local storage (as per requirement)")
+                # 返回空字符串，表示未保存
+                return ""
         
-        # 🥈 降级到本地文件系统
-        try:
-            # 创建 session 目录
-            session_dir = self.base_dir / session_id
-            session_dir.mkdir(parents=True, exist_ok=True)
-            
-            # 文件路径
-            file_path = session_dir / f"step_{step_id}.json"
-            
-            # 构建 artifact 结构
-            artifact = {
-                "step_id": step_id,
-                "session_id": session_id,
-                "timestamp": datetime.now().isoformat(),
-                "result": result,
-                "metadata": metadata or {}
-            }
-            
-            # 保存到文件
-            with open(file_path, "w", encoding="utf-8") as f:
-                json.dump(artifact, f, ensure_ascii=False, indent=2)
-            
-            # 返回相对路径
-            relative_path = str(file_path.relative_to(self.base_dir))
-            
-            # 统计信息
-            file_size = file_path.stat().st_size
-            result_size = len(json.dumps(result, ensure_ascii=False))
-            
-            logger.info(
-                f"📂 Saved to local: {relative_path} "
-                f"(result: {result_size} bytes, file: {file_size} bytes)"
-            )
-            
-            return relative_path
-            
-        except Exception as e:
-            logger.error(f"❌ Failed to save locally: {e}")
-            raise IOError(f"Failed to save artifact: {e}") from e
+        # S3 不可用时，也不保存本地（根据用户需求）
+        logger.warning("⚠️  S3 not available, skipping step_artifact storage (content already in MD file)")
+        return ""
     
     def _extract_user_id(self, session_id: str) -> str:
         """

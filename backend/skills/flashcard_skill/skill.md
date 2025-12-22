@@ -11,7 +11,7 @@
 
 ### Primary Keywords (主要关键词)
 ```
-闪卡, 卡片, 记忆卡, 抽认卡, flashcard, card, anki
+闪卡, 卡片, 记忆卡, 抽认卡, 背诵卡, 复习卡, flashcard, card, anki, memo card
 ```
 
 ### Quantity Patterns (数量模式)

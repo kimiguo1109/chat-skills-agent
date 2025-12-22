@@ -152,11 +152,31 @@
 </div>
 <!-- Text Input Area -->
 <div class="px-6 pb-6 pt-4 bg-background-light dark:bg-background-dark">
-<div class="relative">
-<input id="messageInput" class="w-full h-12 px-4 pr-12 rounded-lg bg-surface-light dark:bg-surface-dark border border-border-light dark:border-border-dark focus:ring-2 focus:ring-primary focus:outline-none transition-shadow text-text-light-primary dark:text-text-dark-primary placeholder-text-light-secondary dark:placeholder-text-dark-secondary" placeholder="Ask a question or type your answer..." type="text" onkeypress="if(event.key==='Enter') handleSend()"/>
+<!-- 🆕 上传错误提示 -->
+<div id="uploadError" class="hidden mb-2 px-3 py-2 text-sm text-red-600 bg-red-100 dark:bg-red-900/30 dark:text-red-400 rounded-lg"></div>
+
+<!-- 🆕 已上传文件显示 -->
+<div id="uploadedFileDisplay" class="hidden mb-2 flex items-center gap-2 px-3 py-2 bg-green-100 dark:bg-green-900/30 rounded-lg">
+  <span class="material-symbols-outlined text-green-600 dark:text-green-400">attach_file</span>
+  <span id="uploadedFileName" class="text-sm text-green-700 dark:text-green-300 truncate flex-1"></span>
+  <button onclick="removeUploadedFile()" class="text-green-600 dark:text-green-400 hover:text-red-500 transition-colors">
+    <span class="material-symbols-outlined text-sm">close</span>
+  </button>
+</div>
+
+<div class="flex items-center gap-2">
+<!-- 🆕 文件上传按钮 -->
+<input type="file" id="fileInput" class="hidden" accept=".txt,.pdf,.doc,.docx,.jpg,.jpeg,.png,.gif,.webp,.md,.csv,.json" onchange="handleFileSelect(event)"/>
+<button id="uploadBtn" onclick="document.getElementById('fileInput').click()" class="flex items-center justify-center size-12 rounded-lg bg-surface-light dark:bg-surface-dark border border-border-light dark:border-border-dark hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors" title="上传附件">
+  <span class="material-symbols-outlined text-xl text-text-light-secondary dark:text-text-dark-secondary">attach_file</span>
+</button>
+
+<div class="relative flex-1">
+<input id="messageInput" class="w-full h-12 px-4 pr-12 rounded-lg bg-surface-light dark:bg-surface-dark border border-border-light dark:border-border-dark focus:ring-2 focus:ring-primary focus:outline-none transition-shadow text-text-light-primary dark:text-text-dark-primary placeholder-text-light-secondary dark:placeholder-text-dark-secondary" placeholder="输入问题或上传附件..." type="text" onkeypress="if(event.key==='Enter') handleSend()"/>
 <button onclick="handleSend()" class="absolute right-2 top-1/2 -translate-y-1/2 flex items-center justify-center size-8 rounded-lg bg-primary text-white hover:bg-primary/90 transition-colors">
 <span class="material-symbols-outlined text-xl">send</span>
 </button>
+</div>
 </div>
 </div>
 </main>
@@ -227,7 +247,7 @@
 </div>
 
 <!-- Custom JavaScript -->
-<script src="demo.js"></script>
+<script src="demo.js?v=20251203_2"></script>
 </body>
 </html>
 

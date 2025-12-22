@@ -11,7 +11,7 @@
 
 ### Primary Keywords (主要关键词)
 ```
-笔记, 总结, 归纳, 整理, notes, summary, summarize
+笔记, 总结, 归纳, 整理, 提炼, 梳理, 要点, notes, summary, summarize, outline
 ```
 
 ### Quantity Patterns (数量模式)

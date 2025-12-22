@@ -23,8 +23,17 @@ class Settings(BaseSettings):
     OPENAI_BASE_URL: str = "https://api.openai.com/v1"
     OPENAI_TIMEOUT: float = 30.0
     
+    # 外部 API 配置（Flashcard / Quiz）
+    EXTERNAL_API_TOKEN: str = ""
+    EXTERNAL_FLASHCARD_API_URL: str = "https://test.istudyx.com/api/studyx/v5/cloud/note/flashcardsAndQuiz/createFlashcards"
+    EXTERNAL_QUIZ_API_URL: str = "https://test.istudyx.com/api/studyx/v5/cloud/note/flashcardsAndQuiz/createQuizs"
+    
+    # 🆕 StudyX Agent API 配置（新的 createFlashcardAgent 接口）
+    STUDYX_AGENT_API_URL: str = "https://test.istudyx.com/api/studyx/v5/cloud/note/flashcardsAndQuiz/createFlashcardAgent"
+    STUDYX_AGENT_API_TOKEN: str = "eyJ0eXBlIjoiSldUIiwiZXhwIjoxNzY1MjY1NjQzLCJhbGciOiJIUzI1NiIsImlhdCI6MTc2Mzk2OTY0M30.eyJyb2xlY29kZSI6IjMwIiwidXNlcmd1aWQiOiIxNjU1NDg1NTY4NDYyNzUzNzkyIn0.99a6038d1303ff9b14b25b7c85248dfa"
+    
     # AWS S3 配置（用于 demo 阶段存储数据）
-    USE_S3_STORAGE: bool = False  # ⚠️ 开发环境使用本地存储
+    USE_S3_STORAGE: bool = True  # 启用 S3 存储（.env 文件中可以覆盖）
     AWS_ACCESS_KEY_ID: str = ""
     AWS_SECRET_ACCESS_KEY: str = ""
     AWS_REGION: str = "us-east-1"

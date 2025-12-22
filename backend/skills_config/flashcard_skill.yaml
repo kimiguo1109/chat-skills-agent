@@ -10,6 +10,19 @@ intent_tags:
   - memory_card
   - study_card
 
+primary_keywords:
+  - "闪卡"
+  - "卡片"
+  - "记忆卡"
+  - "抽认卡"
+  - "背诵卡"
+  - "复习卡"
+  - "生成闪卡"
+  - "做闪卡"
+  - "flashcard"
+  - "card"
+  - "anki"
+
 input_schema:
   type: object
   properties:
@@ -42,54 +55,35 @@ input_schema:
 
 output_schema:
   type: object
+  description: "闪卡输出格式（与外部API对齐）"
   properties:
-    flashcard_set_id:
+    title:
       type: string
-      description: "抽认卡集合唯一标识"
-    subject:
-      type: string
-      description: "学科"
-    topic:
-      type: string
-      description: "主题"
-    cards:
+      description: "闪卡集合标题"
+    cardList:
       type: array
+      description: "闪卡列表"
       items:
         type: object
         properties:
-          card_id:
-            type: string
-            description: "卡片ID"
           front:
             type: string
             description: "正面内容（问题或提示）"
           back:
             type: string
             description: "背面内容（答案或解释）"
-          card_type:
-            type: string
-            description: "卡片类型"
-          hints:
-            type: array
-            items:
-              type: string
-            description: "记忆提示"
-          related_concepts:
-            type: array
-            items:
-              type: string
-            description: "相关概念"
+        required:
+          - front
+          - back
   required:
-    - flashcard_set_id
-    - subject
-    - topic
-    - cards
+    - title
+    - cardList
 
 models:
-  primary: "moonshotai/kimi-k2-thinking"  # 🆕 使用 Kimi thinking 模型
-  fallback: "moonshotai/kimi-k2-thinking"
+  primary: "gemini-2.5-flash"  # 🔧 使用 Gemini 2.5 Flash（关闭 Kimi）
+  fallback: "gemini-2.5-flash"
 
-thinking_budget: 64  # ⚡⚡⚡⚡ 极速模式：上下文已在prompt中，无需过多思考
+thinking_budget: 32  # ⚡⚡⚡⚡ 极速模式：32 tokens实现3-5秒响应
                      # - reference_explanation已包含所有信息
                      # - 只需快速提取关键点生成卡片
                      # - 配合max_tokens(3564)确保输出完整

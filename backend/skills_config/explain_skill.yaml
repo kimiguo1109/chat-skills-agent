@@ -7,6 +7,23 @@ intent_tags:
   - "concept"
   - "understand"
 
+primary_keywords:
+  - "解释"
+  - "讲解"
+  - "讲述"
+  - "说明"
+  - "什么是"
+  - "介绍"
+  - "定义"
+  - "教我"
+  - "告诉我"
+  - "科普"
+  - "解读"
+  - "explain"
+  - "what is"
+  - "understand"
+  - "teach me"
+
 input_schema:
   type: "object"
   properties:
@@ -62,10 +79,10 @@ output_schema:
     - "formal_definition"
 
 models:
-  primary: "moonshotai/kimi-k2-thinking"  # 🆕 使用 Kimi thinking 模型
-  fallback: "moonshotai/kimi-k2-thinking"
+  primary: "gemini-2.5-flash"  # 🔧 使用 Gemini 2.5 Flash（关闭 Kimi）
+  fallback: "gemini-2.5-flash"
 
-thinking_budget: 64  # ⚡⚡⚡⚡ 极速模式：64 tokens实现5-10秒响应
+thinking_budget: 32  # ⚡⚡⚡⚡ 极速模式：32 tokens实现3-5秒响应
                      # - 简单概念(如牛顿定律): 2分钟 → 5-10秒 (-91%)
                      # - 配合严格的prompt约束实现快速响应
                      # - max_tokens自动扩展到3564确保输出完整性

@@ -11,7 +11,7 @@
 
 ### Primary Keywords (主要关键词)
 ```
-题, 题目, 练习, 测试, 考题, quiz, test, question, exercise
+题, 题目, 练习, 测试, 考题, 测验, 做题, 刷题, 问题, 习题, 试题, quiz, test, question, exercise, exam
 ```
 
 ### Quantity Patterns (数量模式)

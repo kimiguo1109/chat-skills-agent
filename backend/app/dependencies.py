@@ -4,16 +4,21 @@
 
 🆕 已迁移到 Kimi (Moonshot AI) API
 """
+from app.config import settings
 from app.core.memory_manager import MemoryManager
 from app.core.skill_orchestrator import SkillOrchestrator
 from app.services.kimi import KimiClient  # 🆕 使用 Kimi Client
 # from app.services.gemini import GeminiClient  # ⚠️ 已弃用
+try:
+    from app.services.gemini import GeminiClient
+except ImportError:
+    GeminiClient = None
 
 
 def get_memory_manager() -> MemoryManager:
     """获取 Memory Manager 单例"""
     if not hasattr(get_memory_manager, "_instance"):
-        get_memory_manager._instance = MemoryManager(use_s3=False)
+        get_memory_manager._instance = MemoryManager(use_s3=settings.USE_S3_STORAGE)
     return get_memory_manager._instance
 
 

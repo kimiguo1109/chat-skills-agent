@@ -287,3 +287,61 @@ body {
     }
 }
 
+/* ============= Context Preview Animation ============= */
+[id$="-context-preview"] {
+    transition: opacity 0.5s ease-in-out;
+}
+
+/* ============= Context Stats & Token Usage ============= */
+.context-stats-badge {
+    animation: fadeIn 0.3s ease-in-out;
+}
+
+.token-usage-badge {
+    animation: fadeIn 0.3s ease-in-out;
+}
+
+@keyframes fadeIn {
+    from { opacity: 0; transform: translateY(-5px); }
+    to { opacity: 1; transform: translateY(0); }
+}
+
+/* ============= Clarification Card ============= */
+.clarification-card {
+    transition: all 0.2s ease;
+}
+
+.clarification-card:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+}
+
+/* ============= Learning Bundle Styles ============= */
+.learning-bundle-component {
+    transition: all 0.2s ease;
+}
+
+.learning-bundle-component:hover {
+    background-color: rgba(var(--primary-rgb), 0.05);
+}
+
+/* ============= Thinking Mode Indicator ============= */
+.thinking-mode-real {
+    color: #8b5cf6;
+    background: linear-gradient(135deg, #ddd6fe 0%, #ede9fe 100%);
+}
+
+.thinking-mode-fake {
+    color: #10b981;
+    background: linear-gradient(135deg, #d1fae5 0%, #ecfdf5 100%);
+}
+
+/* Dark mode variants */
+.dark .thinking-mode-real {
+    background: linear-gradient(135deg, rgba(139, 92, 246, 0.2) 0%, rgba(139, 92, 246, 0.1) 100%);
+}
+
+.dark .thinking-mode-fake {
+    background: linear-gradient(135deg, rgba(16, 185, 129, 0.2) 0%, rgba(16, 185, 129, 0.1) 100%);
+}
+

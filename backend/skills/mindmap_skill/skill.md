@@ -11,7 +11,7 @@
 
 ### Primary Keywords (主要关键词)
 ```
-思维导图, 导图, 脑图, 知识图谱, mindmap, mind map, concept map
+思维导图, 导图, 脑图, 知识图谱, 知识图, 概念图, 结构图, mindmap, mind map, concept map, knowledge graph
 ```
 
 ### Quantity Patterns (数量模式)

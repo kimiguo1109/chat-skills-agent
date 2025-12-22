@@ -4,8 +4,11 @@ uvicorn[standard]==0.30.0
 pydantic==2.9.0
 pydantic-settings==2.5.0
 
-# Google Gemini API
-google-generativeai==0.8.0
+# Google Gemini API (new SDK)
+google-genai>=1.2.0
+
+# OpenAI SDK (用于 Kimi API 兼容)
+openai>=1.0.0
 
 # AWS S3 存储（用于 demo 阶段替代数据库）
 boto3==1.35.0
@@ -19,6 +22,10 @@ jsonschema==4.23.0
 
 # HTTP 客户端
 httpx==0.27.0
+aiohttp>=3.9.0  # 外部 API 调用（flashcard 等）
+
+# Google Cloud Storage（附件上传）
+google-cloud-storage>=2.10.0
 
 # 日志和工具
 python-multipart==0.0.9

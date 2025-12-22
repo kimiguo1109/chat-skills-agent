@@ -1,8 +1,13 @@
 // API 配置
-const API_BASE = 'http://localhost:8000';
+// API 配置 - 使用相对路径，通过 Vite 代理转发
+const API_BASE = '';
 let USER_ID = null;
 let SESSION_ID = null;
 let CURRENT_USER_DATA = null;
+
+// 🆕 文件上传状态
+let UPLOADED_FILE_URI = null;
+let UPLOADED_FILE_NAME = null;
 
 // ============= 用户管理 =============
 
@@ -171,6 +176,136 @@ function addSystemMessage(message) {
     chatMessages.scrollTop = chatMessages.scrollHeight;
 }
 
+// ============= 文件上传 =============
+
+// 支持的文件类型和大小限制
+const ALLOWED_EXTENSIONS = ['.txt', '.pdf', '.doc', '.docx', '.jpg', '.jpeg', '.png', '.gif', '.webp', '.md', '.csv', '.json'];
+const MAX_FILE_SIZE = 10 * 1024 * 1024; // 10MB
+
+// 文件选择处理
+async function handleFileSelect(event) {
+    const file = event.target.files?.[0];
+    if (!file) return;
+    
+    // 验证文件类型
+    const ext = '.' + file.name.split('.').pop()?.toLowerCase();
+    if (!ALLOWED_EXTENSIONS.includes(ext)) {
+        showUploadError(`不支持的文件类型: ${ext}`);
+        return;
+    }
+    
+    // 验证文件大小
+    if (file.size > MAX_FILE_SIZE) {
+        showUploadError(`文件过大，最大支持 ${MAX_FILE_SIZE / (1024 * 1024)}MB`);
+        return;
+    }
+    
+    // 显示上传中状态
+    const uploadBtn = document.getElementById('uploadBtn');
+    uploadBtn.innerHTML = '<span class="material-symbols-outlined text-xl animate-spin">sync</span>';
+    uploadBtn.disabled = true;
+    
+    try {
+        const formData = new FormData();
+        formData.append('file', file);
+        formData.append('user_id', USER_ID || 'anonymous');
+        
+        const response = await fetch(`${API_BASE}/api/external/upload`, {
+            method: 'POST',
+            body: formData
+        });
+        
+        const result = await response.json();
+        
+        if (result.code !== 0 || !result.data) {
+            throw new Error(result.msg || '上传失败');
+        }
+        
+        // 如果是 mock 模式，显示警告并阻止使用
+        if (result.data.mock) {
+            console.warn('⚠️ GCS 未配置，文件未真正上传');
+            showUploadError('⚠️ 文件服务未配置，请直接使用已有的 GCS 文件路径（如 gs://kimi-dev/ap 美国历史sample.txt）');
+            return;
+        }
+        
+        // 保存上传结果
+        UPLOADED_FILE_URI = result.data.file_uri;
+        UPLOADED_FILE_NAME = result.data.original_name;
+        
+        // 显示已上传文件
+        showUploadedFile(UPLOADED_FILE_NAME);
+        
+        console.log('✅ File uploaded:', UPLOADED_FILE_URI);
+        
+    } catch (error) {
+        console.error('❌ Upload failed:', error);
+        showUploadError(error.message || '上传失败');
+    } finally {
+        // 恢复按钮状态
+        uploadBtn.innerHTML = '<span class="material-symbols-outlined text-xl text-text-light-secondary dark:text-text-dark-secondary">attach_file</span>';
+        uploadBtn.disabled = false;
+        // 重置 input
+        event.target.value = '';
+    }
+}
+
+// 显示已上传文件
+function showUploadedFile(fileName) {
+    const display = document.getElementById('uploadedFileDisplay');
+    const nameEl = document.getElementById('uploadedFileName');
+    const uploadBtn = document.getElementById('uploadBtn');
+    
+    nameEl.textContent = fileName;
+    display.classList.remove('hidden');
+    
+    // 更新上传按钮样式
+    uploadBtn.classList.remove('bg-surface-light', 'dark:bg-surface-dark', 'border', 'border-border-light', 'dark:border-border-dark');
+    uploadBtn.classList.add('bg-green-500', 'text-white');
+    uploadBtn.innerHTML = '<span class="material-symbols-outlined text-xl">check</span>';
+    
+    // 更新输入框提示
+    const input = document.getElementById('messageInput');
+    input.placeholder = '输入指令（如：帮我出5道题）...';
+    
+    hideUploadError();
+}
+
+// 移除已上传文件
+function removeUploadedFile() {
+    UPLOADED_FILE_URI = null;
+    UPLOADED_FILE_NAME = null;
+    
+    const display = document.getElementById('uploadedFileDisplay');
+    const uploadBtn = document.getElementById('uploadBtn');
+    const input = document.getElementById('messageInput');
+    
+    display.classList.add('hidden');
+    
+    // 恢复上传按钮样式
+    uploadBtn.classList.add('bg-surface-light', 'dark:bg-surface-dark', 'border', 'border-border-light', 'dark:border-border-dark');
+    uploadBtn.classList.remove('bg-green-500', 'text-white');
+    uploadBtn.innerHTML = '<span class="material-symbols-outlined text-xl text-text-light-secondary dark:text-text-dark-secondary">attach_file</span>';
+    
+    // 恢复输入框提示
+    input.placeholder = '输入问题或上传附件...';
+}
+
+// 显示上传错误
+function showUploadError(message) {
+    const errorEl = document.getElementById('uploadError');
+    errorEl.textContent = message;
+    errorEl.classList.remove('hidden');
+    
+    // 5秒后自动隐藏
+    setTimeout(hideUploadError, 5000);
+}
+
+// 隐藏上传错误
+function hideUploadError() {
+    const errorEl = document.getElementById('uploadError');
+    errorEl.classList.add('hidden');
+}
+
 // 发送消息
 // 🌊 流式生成标志（可切换）
 const USE_STREAMING = true;  // 设为false使用传统模式
@@ -179,23 +314,293 @@ async function handleSend() {
     const input = document.getElementById('messageInput');
     const message = input.value.trim();
     
-    if (!message) return;
+    // 🆕 支持仅上传文件的情况
+    if (!message && !UPLOADED_FILE_URI) return;
     
-    console.log('📤 Sending message:', message);
+    // 如果有文件但没有消息，使用默认消息
+    const finalMessage = message || '帮我分析这个文件';
+    
+    console.log('📤 Sending message:', finalMessage);
+    if (UPLOADED_FILE_URI) {
+        console.log('📎 With file:', UPLOADED_FILE_URI);
+    }
     
     // 清空输入框
     input.value = '';
     
-    // 添加用户消息
-    addUserMessage(message);
+    // 🆕 保存当前文件状态（发送后清除）
+    const currentFileUri = UPLOADED_FILE_URI;
+    const currentFileName = UPLOADED_FILE_NAME;
+    
+    // 清除已上传文件状态
+    if (UPLOADED_FILE_URI) {
+        removeUploadedFile();
+    }
+    
+    // 添加用户消息（包含文件信息）
+    if (currentFileName) {
+        addUserMessage(`📎 ${currentFileName}\n${finalMessage}`);
+    } else {
+        addUserMessage(finalMessage);
+    }
     
     if (USE_STREAMING) {
-        // 🌊 使用流式API
-        await handleStreamingResponse(message);
+        // 🌊 使用流式API（暂不支持文件，会 fallback 到传统模式）
+        if (currentFileUri) {
+            // 有文件时使用 external/chat API
+            await handleFileWithMessage(finalMessage, currentFileUri);
+        } else {
+            await handleStreamingResponse(finalMessage);
+        }
     } else {
         // 传统模式
-        await handleTraditionalResponse(message);
+        await handleTraditionalResponse(finalMessage);
     }
+}
+
+// 🆕 处理带文件的消息（通过 external/chat API）
+async function handleFileWithMessage(message, fileUri) {
+    // 移除旧的加载消息
+    removeLoadingMessage();
+    
+    // 创建响应容器
+    const responseId = `response-${Date.now()}`;
+    createStreamingResponseContainer(responseId);
+    
+    try {
+        const response = await fetch(`${API_BASE}/api/external/chat`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+                message: message,
+                file_uri: fileUri,
+                user_id: USER_ID,
+                session_id: SESSION_ID
+            })
+        });
+        
+        const result = await response.json();
+        
+        if (result.code !== 0) {
+            throw new Error(result.msg || '请求失败');
+        }
+        
+        const data = result.data;
+        console.log('📥 External API response:', data);
+        
+        // 构建 artifact 格式
+        const artifact = {
+            type: data.content_type || 'text',
+            payload: data.content || {},
+            meta: { topic: data.topic }
+        };
+        
+        // 渲染响应
+        const container = document.getElementById(responseId);
+        if (container) {
+            container.innerHTML = '';
+            
+            // 🆕 渲染上下文统计（如果有）
+            if (data.context_stats) {
+                container.innerHTML += renderContextStats(data.context_stats);
+            }
+            
+            // 🆕 根据 content_type 渲染不同内容
+            renderExternalChatContent(container, data);
+            
+            // 🆕 渲染 Token 使用统计（如果有）
+            if (data.token_usage) {
+                container.innerHTML += renderTokenUsage(data.token_usage);
+            }
+        }
+        
+    } catch (error) {
+        console.error('❌ External API error:', error);
+        const container = document.getElementById(responseId);
+        if (container) {
+            container.innerHTML = `
+                <div class="text-red-500 p-4 bg-red-50 dark:bg-red-900/20 rounded-lg">
+                    <p class="font-bold">❌ 处理失败</p>
+                    <p class="text-sm">${error.message}</p>
+                </div>
+            `;
+        }
+    }
+}
+
+// 🆕 渲染上下文统计
+function renderContextStats(stats) {
+    if (!stats) return '';
+    
+    const { loaded_turns, session_turns, retrieved_turns, context_source } = stats;
+    
+    // 如果都是0，不显示
+    if (!loaded_turns && !session_turns && !retrieved_turns) return '';
+    
+    return `
+        <div class="mb-3 px-3 py-2 rounded-lg bg-indigo-50 dark:bg-indigo-900/20 border border-indigo-200 dark:border-indigo-800 text-xs">
+            <div class="flex items-center gap-3 text-indigo-700 dark:text-indigo-300">
+                <span class="flex items-center gap-1">
+                    <span class="material-symbols-outlined text-sm">history</span>
+                    上下文: ${loaded_turns || 0} 轮
+                </span>
+                ${session_turns ? `<span>会话: ${session_turns} 轮</span>` : ''}
+                ${context_source ? `<span class="opacity-70">(${context_source})</span>` : ''}
+            </div>
+        </div>
+    `;
+}
+
+// 🆕 渲染 Token 使用统计
+function renderTokenUsage(usage) {
+    if (!usage) return '';
+    
+    const { intent_router, skill_execution, total_internal_tokens } = usage;
+    
+    // 如果没有实质内容，不显示
+    if (!total_internal_tokens && !intent_router?.tokens && !skill_execution?.total_tokens) return '';
+    
+    const intentMethod = intent_router?.method || 'unknown';
+    const intentTokens = intent_router?.tokens || 0;
+    const skillTokens = skill_execution?.total_tokens || 0;
+    const thinkingMode = skill_execution?.thinking_mode || '';
+    
+    return `
+        <div class="mt-3 px-3 py-2 rounded-lg bg-gray-50 dark:bg-gray-800/50 border border-gray-200 dark:border-gray-700 text-xs">
+            <div class="flex items-center flex-wrap gap-3 text-gray-500 dark:text-gray-400">
+                <span class="flex items-center gap-1">
+                    <span class="material-symbols-outlined text-sm">bolt</span>
+                    Token: ${total_internal_tokens || (intentTokens + skillTokens)}
+                </span>
+                ${intentMethod === 'skill_registry' ? '<span class="text-green-600 dark:text-green-400">⚡ 0-token匹配</span>' : ''}
+                ${thinkingMode ? `<span class="text-purple-600 dark:text-purple-400">${thinkingMode === 'real' ? '🧠 真思考' : '⚡ 伪思考'}</span>` : ''}
+            </div>
+        </div>
+    `;
+}
+
+// 🆕 渲染 External Chat API 响应内容
+function renderExternalChatContent(container, data) {
+    const contentType = data.content_type || 'text';
+    const content = data.content || {};
+    const topic = data.topic || '';
+    
+    // 🔧 调试日志
+    console.log('🔍 renderExternalChatContent:', {
+        contentType,
+        content,
+        contentText: content?.text,
+        contentTextType: typeof content?.text
+    });
+    
+    let contentHtml = '';
+    
+    // 根据 content_type 渲染不同内容
+    switch (contentType) {
+        case 'quiz_set':
+            if (content.questions) {
+                contentHtml = renderQuizCard(content);
+            }
+            break;
+            
+        case 'flashcard_set':
+            if (content.cardList || content.cards) {
+                contentHtml = renderFlashcardSet(content);
+            }
+            break;
+            
+        case 'explanation':
+            if (content.concept || content.intuition) {
+                contentHtml = renderExplainCard(content);
+            }
+            break;
+            
+        case 'learning_bundle':
+            if (content.components) {
+                contentHtml = renderLearningBundle(content);
+            }
+            break;
+            
+        case 'mindmap':
+            if (content.root) {
+                contentHtml = renderMindMapCard(content);
+            }
+            break;
+            
+        case 'notes':
+            if (content.structured_notes) {
+                contentHtml = renderNotesCard(content);
+            }
+            break;
+            
+        case 'clarification_needed':
+        case 'clarification':
+            // 🆕 澄清请求：显示引导式提问
+            contentHtml = renderClarificationCard({
+                ...content,
+                intent: data.intent
+            });
+            break;
+            
+        case 'text':
+        default:
+            // 文本对话
+            const text = content.text || (typeof content === 'string' ? content : JSON.stringify(content, null, 2));
+            contentHtml = `
+                <div class="prose dark:prose-invert max-w-none">
+                    <p class="text-base font-normal leading-relaxed rounded-xl px-4 py-3 bg-surface-light dark:bg-surface-dark border border-border-light dark:border-border-dark text-text-light-primary dark:text-text-dark-primary whitespace-pre-wrap">
+                        ${formatTextWithMarkdown(text)}
+                    </p>
+                </div>
+            `;
+            break;
+    }
+    
+    // 如果有 topic，显示 topic 标签
+    if (topic && contentType !== 'text' && contentType !== 'clarification_needed') {
+        contentHtml = `
+            <div class="mb-2 flex items-center gap-2">
+                <span class="px-2 py-1 rounded-full bg-primary/10 text-primary text-xs font-medium">
+                    📚 ${topic}
+                </span>
+                <span class="text-xs text-gray-500 dark:text-gray-400">
+                    ${contentType.replace('_', ' ')}
+                </span>
+            </div>
+        ` + contentHtml;
+    }
+    
+    container.innerHTML += contentHtml;
+    
+    // 渲染 LaTeX
+    renderMathInContent(container);
+}
+
+// 🆕 格式化文本（支持简单的 Markdown）
+function formatTextWithMarkdown(text) {
+    if (!text) return '';
+    
+    // 转义 HTML
+    let formatted = text
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;');
+    
+    // 粗体 **text**
+    formatted = formatted.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
+    
+    // 斜体 *text*
+    formatted = formatted.replace(/\*([^*]+)\*/g, '<em>$1</em>');
+    
+    // 列表项 - item 或 * item
+    formatted = formatted.replace(/^[\-\*]\s+(.+)$/gm, '<li class="ml-4">$1</li>');
+    
+    // 数字列表 1. item
+    formatted = formatted.replace(/^\d+\.\s+(.+)$/gm, '<li class="ml-4 list-decimal">$1</li>');
+    
+    return formatted;
 }
 
 // 🌊 流式响应处理
@@ -325,6 +730,19 @@ function createStreamingResponseContainer(responseId) {
                 <div id="${responseId}-status" class="flex items-center gap-2 text-sm text-text-light-secondary dark:text-text-dark-secondary">
                     <div class="w-2 h-2 rounded-full bg-primary animate-bounce"></div>
                     <span>正在思考...</span>
+                </div>
+                
+                <!-- 🆕 上下文预览区域 -->
+                <div id="${responseId}-context-preview" class="w-full hidden">
+                    <div class="px-4 py-3 rounded-lg bg-gradient-to-r from-indigo-50 to-purple-50 dark:from-indigo-900/20 dark:to-purple-900/20 border border-indigo-200 dark:border-indigo-800">
+                        <div class="flex items-start gap-2">
+                            <span class="text-indigo-600 dark:text-indigo-400 flex-shrink-0">📚</span>
+                            <div class="flex-1">
+                                <p id="${responseId}-context-preview-message" class="text-sm font-medium text-indigo-700 dark:text-indigo-300 mb-1"></p>
+                                <ul id="${responseId}-context-preview-details" class="text-xs text-indigo-600 dark:text-indigo-400 space-y-0.5 list-none"></ul>
+                            </div>
+                        </div>
+                    </div>
                 </div>
                 
                 <!-- 🆕 Plan预览区域（最上面，独立显示） -->
@@ -665,17 +1083,20 @@ function renderQuizStreamingUI(partialData) {
 }
 
 // 🆕 流式渲染辅助函数 - Flashcard (与 renderFlashcardSet 结构对齐)
+// 🔥 更新为外部 API 格式 (title + cardList)
 function renderFlashcardStreamingUI(partialData) {
-    const cards = partialData.cards || [];
+    // 兼容新旧格式
+    const cards = partialData.cardList || partialData.cards || [];
+    const title = partialData.title || partialData.topic || '抽认卡集合';
+    
     let html = '<div class="flex flex-col gap-4 w-full">';
-    html += `<h3 class="text-lg font-bold text-text-light-primary dark:text-text-dark-primary">📚 抽认卡集合</h3>`;
+    html += `<h3 class="text-lg font-bold text-text-light-primary dark:text-text-dark-primary">📚 ${title}</h3>`;
     
     cards.forEach((card, idx) => {
         html += `
             <div class="rounded-xl border border-border-light dark:border-border-dark bg-surface-light dark:bg-surface-dark p-6 shadow-sm">
                 <div class="flex items-center gap-2 mb-4">
                     <span class="bg-primary text-white rounded-full h-6 w-6 inline-flex items-center justify-center text-sm">${idx + 1}</span>
-                    <span class="text-sm text-slate-500">${card.card_type || 'generating...'}</span>
                 </div>
                 <div class="space-y-4">
                     <div>
@@ -688,19 +1109,9 @@ function renderFlashcardStreamingUI(partialData) {
                     <div class="border-t border-border-light dark:border-border-dark pt-4">
                         <p class="text-sm font-medium text-slate-500 mb-2">背面（Back）</p>
                         <p class="text-base text-text-light-primary dark:text-text-dark-primary">${card.back || ''}</p>
-                    </div>`;
-        
-        if (card.hints && card.hints.length > 0) {
-            html += `
-                    <div class="bg-slate-50 dark:bg-slate-800/50 p-3 rounded-lg">
-                        <p class="text-sm font-medium text-primary mb-1">💡 提示</p>
-                        <ul class="text-sm text-slate-600 dark:text-slate-300 list-disc list-inside">
-                            ${card.hints.map(h => `<li>${h}</li>`).join('')}
-                        </ul>
-                    </div>`;
-        }
-        
-        html += `</div></div>`;
+                    </div>
+                </div>
+            </div>`;
     });
     
     if (cards.length === 0) {
@@ -885,6 +1296,37 @@ function handleStreamChunk(responseId, data) {
     if (data.type === 'status') {
         if (statusEl) {
             statusEl.querySelector('span').textContent = data.message;
+        }
+    }
+    // 🆕 上下文预览事件
+    else if (data.type === 'context_preview') {
+        const contextPreviewEl = document.getElementById(`${responseId}-context-preview`);
+        const messageEl = document.getElementById(`${responseId}-context-preview-message`);
+        const detailsEl = document.getElementById(`${responseId}-context-preview-details`);
+        
+        if (contextPreviewEl && messageEl) {
+            // 显示预览区域
+            contextPreviewEl.classList.remove('hidden');
+            
+            // 设置主消息
+            messageEl.textContent = data.message || '📚 基于上下文生成中...';
+            
+            // 渲染详细信息列表
+            if (detailsEl && data.details && Array.isArray(data.details)) {
+                detailsEl.innerHTML = data.details.map(detail => `
+                    <li class="flex items-start gap-1.5">
+                        <span class="opacity-60">•</span>
+                        <span>${escapeHtml(detail)}</span>
+                    </li>
+                `).join('');
+            }
+            
+            scrollToBottom();
+            
+            // 3秒后自动淡出
+            setTimeout(() => {
+                contextPreviewEl.classList.add('opacity-50');
+            }, 3000);
         }
     }
     // 🆕 Plan Skill进度事件
@@ -1072,7 +1514,7 @@ function handleStreamChunk(responseId, data) {
                     // console.log(`[DEBUG] Rendering explanation card`);
                     stepOutputContent.innerHTML = renderExplainCard(result);
                     renderMathInContent(stepOutputContent); // 🔥 渲染 LaTeX
-                } else if (contentType === 'flashcard_set' && result.cards) {
+                } else if (contentType === 'flashcard_set' && (result.cardList || result.cards)) {
                     // console.log(`[DEBUG] Rendering flashcard set`);
                     stepOutputContent.innerHTML = renderFlashcardSet(result);
                 } else if (contentType === 'quiz_set' && result.questions) {
@@ -1614,7 +2056,7 @@ function handleStreamChunk(responseId, data) {
             } else if (contentType === 'explanation' && data.content.concept) {
                 planFinalContent.innerHTML = renderExplainCard(data.content);
                 renderMathInContent(planFinalContent); // 🔥 渲染 LaTeX
-            } else if (contentType === 'flashcard_set' && data.content.cards) {
+            } else if (contentType === 'flashcard_set' && (data.content.cardList || data.content.cards)) {
                 planFinalContent.innerHTML = renderFlashcardSet(data.content);
             } else if (contentType === 'learning_bundle' && data.content.components) {
                 planFinalContent.innerHTML = renderLearningBundle(data.content);
@@ -1623,6 +2065,14 @@ function handleStreamChunk(responseId, data) {
                 planFinalContent.innerHTML = renderMindMapCard(data.content);
             } else if (contentType === 'notes' && data.content.structured_notes) {
                 planFinalContent.innerHTML = renderNotesCard(data.content);
+            } else if (contentType === 'text' || data.content.text) {
+                // 🆕 文本对话
+                const text = data.content.text || (typeof data.content === 'string' ? data.content : '');
+                planFinalContent.innerHTML = `
+                    <div class="prose dark:prose-invert max-w-none p-4">
+                        <p class="text-base leading-relaxed whitespace-pre-wrap">${formatTextWithMarkdown(text)}</p>
+                    </div>
+                `;
             } else {
                 // 未知类型，显示JSON
                 planFinalContent.innerHTML = `<div class="p-6"><pre class="text-sm">${JSON.stringify(data.content, null, 2)}</pre></div>`;
@@ -1639,7 +2089,7 @@ function handleStreamChunk(responseId, data) {
             } else if (contentType === 'explanation' && data.content.concept) {
                 finalEl.innerHTML = renderExplainCard(data.content);
                 renderMathInContent(finalEl); // 🔥 渲染 LaTeX
-            } else if (contentType === 'flashcard_set' && data.content.cards) {
+            } else if (contentType === 'flashcard_set' && (data.content.cardList || data.content.cards)) {
                 finalEl.innerHTML = renderFlashcardSet(data.content);
             } else if (contentType === 'learning_bundle' && data.content.components) {
                 finalEl.innerHTML = renderLearningBundle(data.content);
@@ -1648,6 +2098,16 @@ function handleStreamChunk(responseId, data) {
                 finalEl.innerHTML = renderMindMapCard(data.content);
             } else if (contentType === 'notes' && data.content.structured_notes) {
                 finalEl.innerHTML = renderNotesCard(data.content);
+            } else if (contentType === 'text' || data.content.text) {
+                // 🆕 文本对话（other intent / chat）
+                const text = data.content.text || (typeof data.content === 'string' ? data.content : '');
+                finalEl.innerHTML = `
+                    <div class="prose dark:prose-invert max-w-none">
+                        <p class="text-base font-normal leading-relaxed rounded-xl px-4 py-3 bg-surface-light dark:bg-surface-dark border border-border-light dark:border-border-dark text-text-light-primary dark:text-text-dark-primary whitespace-pre-wrap">
+                            ${formatTextWithMarkdown(text)}
+                        </p>
+                    </div>
+                `;
             } else {
                 // 未知类型，显示JSON
                 finalEl.innerHTML = `<div class="p-6"><pre class="text-sm">${JSON.stringify(data.content, null, 2)}</pre></div>`;
@@ -1909,36 +2369,64 @@ function renderQuizCard(content) {
     const questions = content.questions || [];
     if (questions.length === 0) return '<p>暂无题目</p>';
     
+    // 获取标题：新格式用 title，旧格式用 subject
+    const title = content.title || content.subject || '练习题';
+    
     // 🆕 添加思考过程
     let html = renderThinkingProcess(content._thinking);
     
     html += '<div class="flex flex-col gap-6 w-full">';
     
     questions.forEach((q, idx) => {
+        // 兼容新旧格式：新格式用 question，旧格式用 question_text
+        const questionText = q.question || q.question_text || '';
+        // 兼容新旧格式：新格式用 answer_options，旧格式用 options
+        const options = q.answer_options || q.options || [];
+        // 新格式有 hint，旧格式有 explanation
+        const hint = q.hint || '';
+        
         html += `
             <div class="flex flex-col gap-6 rounded-xl border border-border-light dark:border-border-dark bg-surface-light dark:bg-surface-dark p-6 shadow-sm">
                 <div class="flex flex-col gap-3">
-                    <p class="text-primary text-base font-medium">${content.subject || '练习题'}</p>
+                    <p class="text-primary text-base font-medium">${title}</p>
                     <div class="rounded bg-slate-200 dark:bg-slate-700">
                         <div class="h-2 rounded bg-primary" style="width: ${((idx + 1) / questions.length * 100)}%;"></div>
                     </div>
                     <p class="text-slate-500 dark:text-slate-400 text-sm">Question ${idx + 1} of ${questions.length}</p>
                 </div>
                 <div class="border-t border-border-light dark:border-border-dark"></div>
-                <h1 class="text-text-light-primary dark:text-text-dark-primary tracking-tight text-xl font-bold">${q.question_text || ''}</h1>
+                <h1 class="text-text-light-primary dark:text-text-dark-primary tracking-tight text-xl font-bold">${questionText}</h1>
                 <div class="flex flex-col gap-3" style="--radio-dot-svg: url('data:image/svg+xml,%3csvg viewBox=%270 0 16 16%27 fill=%27rgb(19,127,236)%27 xmlns=%27http://www.w3.org/2000/svg%27%3e%3ccircle cx=%278%27 cy=%278%27 r=%273%27/%3e%3c/svg%3e');">`;
         
-        (q.options || []).forEach((opt) => {
+        options.forEach((opt, optIdx) => {
+            // 兼容新旧格式：新格式 opt 是对象 {text, rationale, is_correct}，旧格式是字符串
+            const optText = typeof opt === 'object' ? opt.text : opt;
+            const isCorrect = typeof opt === 'object' ? opt.is_correct : false;
+            const rationale = typeof opt === 'object' ? opt.rationale : '';
+            const optionLetter = String.fromCharCode(65 + optIdx); // A, B, C, D...
+            
             html += `
-                    <label class="flex items-center gap-4 rounded-lg border border-solid border-border-light dark:border-border-dark p-4 cursor-pointer hover:bg-slate-50 dark:hover:bg-slate-800/50 has-[:checked]:border-primary has-[:checked]:bg-primary/10">
-                        <input class="h-5 w-5 border-2 border-border-light dark:border-border-dark bg-transparent text-transparent checked:border-primary checked:bg-[image:--radio-dot-svg] focus:outline-none focus:ring-0" name="quiz_${idx}" type="radio"/>
-                        <div class="flex grow flex-col"><p class="text-text-light-primary dark:text-text-dark-primary text-sm font-medium">${opt}</p></div>
+                    <label class="quiz-option flex items-start gap-4 rounded-lg border border-solid border-border-light dark:border-border-dark p-4 cursor-pointer hover:bg-slate-50 dark:hover:bg-slate-800/50 has-[:checked]:border-primary has-[:checked]:bg-primary/10 ${isCorrect ? 'data-correct' : ''}" data-correct="${isCorrect}" data-rationale="${rationale.replace(/"/g, '&quot;')}">
+                        <input class="mt-1 h-5 w-5 border-2 border-border-light dark:border-border-dark bg-transparent text-transparent checked:border-primary checked:bg-[image:--radio-dot-svg] focus:outline-none focus:ring-0" name="quiz_${idx}" type="radio" value="${optionLetter}"/>
+                        <div class="flex grow flex-col gap-1">
+                            <p class="text-text-light-primary dark:text-text-dark-primary text-sm font-medium">${optionLetter}. ${optText}</p>
+                        </div>
                     </label>`;
         });
         
         html += `
                 </div>`;
         
+        // 显示提示（新格式）
+        if (hint) {
+            html += `
+                <div class="flex items-center gap-2 text-sm text-amber-600 dark:text-amber-400">
+                    <span>💡</span>
+                    <span>提示: ${hint}</span>
+                </div>`;
+        }
+        
+        // 显示解析区域（旧格式）
         if (q.explanation) {
             html += `
                 <div class="flex flex-col gap-4 rounded-lg bg-slate-50 dark:bg-slate-800/50 p-4 mt-2">
@@ -2012,22 +2500,25 @@ function renderExplainCard(content) {
     return html;
 }
 
-// 渲染 FlashcardSet
+// 渲染 FlashcardSet - 🔥 更新为外部 API 格式 (title + cardList)
 function renderFlashcardSet(content) {
-    const cards = content.cards || [];
+    // 兼容新旧格式：优先使用 cardList，否则使用 cards
+    const cards = content.cardList || content.cards || [];
     if (cards.length === 0) return '<p>暂无抽认卡</p>';
+    
+    // 获取标题：优先使用 title，否则使用 topic
+    const title = content.title || content.topic || '抽认卡集合';
     
     // 🆕 添加思考过程
     let html = renderThinkingProcess(content._thinking);
     html += '<div class="flex flex-col gap-4 w-full">';
-    html += `<h3 class="text-lg font-bold text-text-light-primary dark:text-text-dark-primary">📚 抽认卡集合</h3>`;
+    html += `<h3 class="text-lg font-bold text-text-light-primary dark:text-text-dark-primary">📚 ${title}</h3>`;
     
     cards.forEach((card, idx) => {
         html += `
             <div class="rounded-xl border border-border-light dark:border-border-dark bg-surface-light dark:bg-surface-dark p-6 shadow-sm">
                 <div class="flex items-center gap-2 mb-4">
                     <span class="bg-primary text-white rounded-full h-6 w-6 inline-flex items-center justify-center text-sm">${idx + 1}</span>
-                    <span class="text-sm text-slate-500">${card.card_type || 'basic'}</span>
                 </div>
                 <div class="space-y-4">
                     <div>
@@ -2037,19 +2528,7 @@ function renderFlashcardSet(content) {
                     <div class="border-t border-border-light dark:border-border-dark pt-4">
                         <p class="text-sm font-medium text-slate-500 mb-2">背面（Back）</p>
                         <p class="text-base text-text-light-primary dark:text-text-dark-primary">${card.back}</p>
-                    </div>`;
-        
-        if (card.hints && card.hints.length > 0) {
-            html += `
-                    <div class="bg-slate-50 dark:bg-slate-800/50 p-3 rounded-lg">
-                        <p class="text-sm font-medium text-primary mb-1">💡 提示</p>
-                        <ul class="text-sm text-slate-600 dark:text-slate-300 list-disc list-inside">
-                            ${card.hints.map(h => `<li>${h}</li>`).join('')}
-                        </ul>
-                    </div>`;
-        }
-        
-        html += `
+                    </div>
                 </div>
             </div>`;
     });
@@ -2686,7 +3165,7 @@ function addAgentMessage(data) {
                 contentHtml += renderQuizCard(result.content);
             } else if (result.content_type === 'explanation' && result.content.concept) {
                 contentHtml += renderExplainCard(result.content);
-            } else if (result.content_type === 'flashcard_set' && result.content.cards) {
+            } else if (result.content_type === 'flashcard_set' && (result.content.cardList || result.content.cards)) {
                 contentHtml += renderFlashcardSet(result.content);
             } else if (result.content_type === 'learning_bundle' && result.content.components) {
                 contentHtml += renderLearningBundle(result.content);
@@ -2708,7 +3187,7 @@ function addAgentMessage(data) {
         // console.log('Explanation content:', data.response_content);
         // console.log('Examples:', data.response_content.examples);
         contentHtml = renderExplainCard(data.response_content);
-    } else if (data.content_type === 'flashcard_set' && data.response_content.cards) {
+    } else if (data.content_type === 'flashcard_set' && (data.response_content.cardList || data.response_content.cards)) {
         contentHtml = renderFlashcardSet(data.response_content);
     } else if (data.content_type === 'learning_bundle' && data.response_content.components) {
         contentHtml = renderLearningBundle(data.response_content);
@@ -2814,7 +3293,7 @@ function detectContentType(content) {
         return 'quiz_set';
     } else if (content.concept && content.intuition) {
         return 'explanation';
-    } else if (content.cards && Array.isArray(content.cards)) {
+    } else if ((content.cardList && Array.isArray(content.cardList)) || (content.cards && Array.isArray(content.cards))) {
         return 'flashcard_set';
     } else if (content.components && Array.isArray(content.components)) {
         return 'learning_bundle';
@@ -3623,8 +4102,9 @@ function getArtifactIcon(type) {
 function getArtifactCount(item) {
   if (item.artifact_type === 'quiz_set' && item.content.questions) {
     return `${item.content.questions.length} 题`;
-  } else if (item.artifact_type === 'flashcard_set' && item.content.cards) {
-    return `${item.content.cards.length} 卡`;
+  } else if (item.artifact_type === 'flashcard_set' && (item.content.cardList || item.content.cards)) {
+    const cards = item.content.cardList || item.content.cards;
+    return `${cards.length} 卡`;
   }
   return null;
 }

@@ -7,6 +7,25 @@ intent_tags:
   - "practice"
   - "exercise"
 
+primary_keywords:
+  - "题"
+  - "题目"
+  - "练习"
+  - "测试"
+  - "考题"
+  - "测验"
+  - "做题"
+  - "刷题"
+  - "问题"
+  - "习题"
+  - "试题"
+  - "出题"
+  - "quiz"
+  - "test"
+  - "question"
+  - "exam"
+  - "exercise"
+
 input_schema:
   type: "object"
   properties:
@@ -63,10 +82,10 @@ output_schema:
     - "questions"
 
 models:
-  primary: "moonshotai/kimi-k2-thinking"  # 🆕 使用 Kimi thinking 模型
-  fallback: "moonshotai/kimi-k2-thinking"
+  primary: "gemini-2.5-flash"  # 🔧 使用 Gemini 2.5 Flash（关闭 Kimi）
+  fallback: "gemini-2.5-flash"
 
-thinking_budget: 64  # ⚡⚡⚡⚡ 极速模式：上下文已在prompt中，无需过多思考
+thinking_budget: 32  # ⚡⚡⚡⚡ 极速模式：32 tokens实现3-5秒响应
                      # - reference_explanation + reference_flashcards已包含所有信息
                      # - 只需快速选择知识点生成题目
                      # - 配合max_tokens(3564)确保输出完整

@@ -11,7 +11,7 @@
 
 ### Primary Keywords (主要关键词)
 ```
-讲解, 解释, 说明, 理解, 了解, 学习, 什么是, 介绍, 定义, explain, what is, define, introduce, understand, learn
+讲解, 讲讲, 讲一讲, 讲下, 解释, 说明, 理解, 了解, 学习, 什么是, 介绍, 定义, 教我, 告诉我, 科普, 解读, explain, what is, define, introduce, understand, learn, tell me about, teach me
 ```
 
 ### Quantity Patterns (数量模式)

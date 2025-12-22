@@ -19,6 +19,19 @@ intent_tags:
   - complete_materials
   - comprehensive_learning
 
+# 🆕 关键词匹配（用于 Skill Registry 0-token 匹配）
+primary_keywords:
+  - "学习包"
+  - "学习套装"
+  - "学习资料"
+  - "学习材料"
+  - "复习资料"
+  - "全套"
+  - "一套"
+  - "组合"
+  - "learning bundle"
+  - "study pack"
+
 # ============= 输入 Schema =============
 input_schema:
   type: object
@@ -262,8 +275,8 @@ models:
   # 用于可能的动态规划功能（未来扩展）
   # ⚠️ 注意：即使配置了model，Plan Skill本身不应该直接调用LLM
   # 如果意外调用，使用支持thinking的模型
-  primary: "moonshotai/kimi-k2-thinking"
-  fallback: "moonshotai/kimi-k2-thinking"
+  primary: "gemini-2.5-flash"  # 🔧 使用 Gemini 2.5 Flash（关闭 Kimi）
+  fallback: "gemini-2.5-flash"
 
 # ⚠️ 注意：没有 thinking_budget 配置
 # 原因：Plan Skill只编排sub-skills，不直接生成内容

@@ -11,7 +11,7 @@ import logging
 import json
 import time
 from typing import Optional, Dict, Any, List
-from google import genai
+from google import genai  # 恢复 Gemini，用于快速压缩任务
 from google.genai import types
 
 from ..config import settings
@@ -22,20 +22,22 @@ logger = logging.getLogger(__name__)
 class GeminiClient:
     """Gemini API 客户端封装（使用最新 SDK）"""
     
-    def __init__(self, api_key: Optional[str] = None):
+    def __init__(self, api_key: Optional[str] = None, model: str = "gemini-2.5-flash"):
         """
         初始化 Gemini 客户端
         
         Args:
             api_key: Gemini API Key，如果不提供则从 settings 读取
+            model: 默认模型名称
         """
         self.api_key = api_key or settings.GEMINI_API_KEY
+        self.model = model  # 🔧 添加 model 属性，与 KimiClient 保持一致
         
         # 创建客户端（使用最新 SDK）
         self.client = genai.Client(api_key=self.api_key)
         self.async_client = self.client.aio
         
-        logger.info("✅ Gemini client initialized with new SDK")
+        logger.info(f"✅ Gemini client initialized with model: {self.model}")
     
     async def generate_stream(
         self,
@@ -44,7 +46,8 @@ class GeminiClient:
         max_tokens: int = 2000,
         temperature: float = 0.7,
         thinking_budget: Optional[int] = 1024,
-        return_thinking: bool = True
+        return_thinking: bool = True,
+        buffer_size: int = 1  # 兼容参数，Gemini 不使用
     ):
         """
         流式生成内容（用于实时展示思考过程）
@@ -66,12 +69,14 @@ class GeminiClient:
             "response_modalities": ["TEXT"],
         }
         
-        # 添加思考配置
-        if thinking_budget is not None and thinking_budget > 0:
-            config_kwargs["thinkingConfig"] = types.ThinkingConfig(
-                thinkingBudget=thinking_budget,
-                includeThoughts=return_thinking
-            )
+        # ⚠️ 思考配置仅支持 Gemini 2.5 Flash (Thinking)，2.0 Flash Exp 不支持
+        # 为保持兼容性，暂时关闭思考配置
+        # 未来可根据 model 名称判断是否支持 thinking
+        # if thinking_budget is not None and thinking_budget > 0 and "thinking" in model.lower():
+        #     config_kwargs["thinkingConfig"] = types.ThinkingConfig(
+        #         thinkingBudget=thinking_budget,
+        #         includeThoughts=return_thinking
+        #     )
         
         config = types.GenerateContentConfig(**config_kwargs)
         
@@ -87,9 +92,21 @@ class GeminiClient:
             
             thinking_accumulated = []
             content_accumulated = []
+            usage_metadata = {}  # 🆕 收集 usage 元数据
             
             async for chunk in stream:
                 logger.debug(f"🔍 Received chunk: {type(chunk)}")
+                
+                # 🆕 捕获 usage metadata（通常在最后一个 chunk）
+                if hasattr(chunk, 'usage_metadata') and chunk.usage_metadata:
+                    um = chunk.usage_metadata
+                    usage_metadata = {
+                        "prompt_tokens": getattr(um, 'prompt_token_count', 0),
+                        "completion_tokens": getattr(um, 'candidates_token_count', 0),
+                        "total_tokens": getattr(um, 'total_token_count', 0),
+                        "thoughts_tokens": getattr(um, 'thoughts_token_count', 0) if hasattr(um, 'thoughts_token_count') else 0
+                    }
+                    logger.info(f"📊 Gemini usage captured: {usage_metadata}")
                 
                 if hasattr(chunk, 'candidates') and chunk.candidates:
                     candidate = chunk.candidates[0]
@@ -123,37 +140,97 @@ class GeminiClient:
                                 # thought是非空字符串，这是纯thinking内容
                                 logger.info(f"🧠 Thinking chunk: {len(thought)} chars, preview: {thought[:50]}")
                                 thinking_accumulated.append(thought)
-                                yield {
-                                    "type": "thinking",
-                                    "text": thought,
-                                    "accumulated": "".join(thinking_accumulated)
-                                }
+                                
+                                # 🔥 流式发送 thinking（支持实时显示）
+                                # 二次分块：确保 thinking 也是流式的
+                                chunk_size = 20
+                                for i in range(0, len(thought), chunk_size):
+                                    mini_chunk = thought[i:i+chunk_size]
+                                    yield {
+                                        "type": "thinking",
+                                        "text": mini_chunk,
+                                        "accumulated": "".join(thinking_accumulated)
+                                    }
                             elif text:
                                 # 🔍 检查text是否是markdown thinking（以**开头）
                                 if text.strip().startswith('**') and not text.strip().startswith('```'):
                                     # 这是markdown格式的thinking内容
                                     logger.info(f"🧠 Thinking chunk (from text): {len(text)} chars, preview: {text[:50]}")
                                     thinking_accumulated.append(text)
-                                    yield {
-                                        "type": "thinking",
-                                        "text": text,
-                                        "accumulated": "".join(thinking_accumulated)
-                                    }
+                                    
+                                    # 🔥 流式发送 thinking
+                                    chunk_size = 20
+                                    for i in range(0, len(text), chunk_size):
+                                        mini_chunk = text[i:i+chunk_size]
+                                        yield {
+                                            "type": "thinking",
+                                            "text": mini_chunk,
+                                            "accumulated": "".join(thinking_accumulated)
+                                        }
                                 else:
                                     # 有text内容，这是实际输出
                                     logger.info(f"📝 Content chunk: {len(text)} chars, preview: {text[:50]}")
                                     content_accumulated.append(text)
-                                    yield {
-                                        "type": "content",
-                                        "text": text,
-                                        "accumulated": "".join(content_accumulated)
-                                    }
+                                    
+                                    # 🔥 流式发送 content
+                                    chunk_size = 20
+                                    for i in range(0, len(text), chunk_size):
+                                        mini_chunk = text[i:i+chunk_size]
+                                        yield {
+                                            "type": "content",
+                                            "text": mini_chunk,
+                                            "accumulated": "".join(content_accumulated)
+                                        }
+            
+            # 🔧 关键修复：确保 done 事件一定会发送
+            logger.info(f"🏁 Stream loop completed, sending done event")
+            logger.info(f"📊 Final accumulated - thinking: {len(''.join(thinking_accumulated))} chars, content: {len(''.join(content_accumulated))} chars")
+            
+            # 🆕 发送 usage 事件（与 Kimi 格式统一）
+            final_thinking = "".join(thinking_accumulated)
+            final_content = "".join(content_accumulated)
+            
+            # 使用实际的 usage metadata（如果有），否则从 chars 估算
+            if usage_metadata:
+                yield {
+                    "type": "usage",
+                    "usage": {
+                        "prompt_tokens": usage_metadata.get("prompt_tokens", 0),
+                        "completion_tokens": usage_metadata.get("completion_tokens", 0),
+                        "total_tokens": usage_metadata.get("total_tokens", 0),
+                        "thinking_chars": len(final_thinking),
+                        "content_chars": len(final_content),
+                        "model": model,
+                        "source": "api"  # 标记为 API 精确数据
+                    }
+                }
+                logger.info(f"📊 Token Usage (Gemini Stream - EXACT)")
+                logger.info(f"   • Input:  {usage_metadata.get('prompt_tokens', 0):,} tokens")
+                logger.info(f"   • Output: {usage_metadata.get('completion_tokens', 0):,} tokens")
+                logger.info(f"   • Total:  {usage_metadata.get('total_tokens', 0):,} tokens")
+            else:
+                # Fallback: 从 chars 估算 tokens（中文约 0.5 token/char）
+                estimated_output = int((len(final_thinking) + len(final_content)) * 0.5)
+                yield {
+                    "type": "usage",
+                    "usage": {
+                        "prompt_tokens": 0,  # 无法估算
+                        "completion_tokens": estimated_output,
+                        "total_tokens": estimated_output,
+                        "thinking_chars": len(final_thinking),
+                        "content_chars": len(final_content),
+                        "model": model,
+                        "source": "estimated"
+                    }
+                }
+                logger.info(f"📊 Token Usage (Gemini Stream - ESTIMATED from {len(final_content)} chars)")
+                logger.info(f"   • Output: ~{estimated_output:,} tokens (estimated)")
             
             # 完成标记
             yield {
                 "type": "done",
-                "thinking": "".join(thinking_accumulated),
-                "content": "".join(content_accumulated)
+                "thinking": final_thinking,
+                "content": final_content
             }
             
             logger.info(f"✅ Streaming generation complete")
@@ -179,26 +256,28 @@ class GeminiClient:
     async def generate(
         self,
         prompt: str,
-        model: str = "gemini-2.5-flash-lite",  # 🆕 使用 2.5 Flash 支持思考模型
+        model: str = "gemini-2.5-flash",  # 🆕 使用 2.5 Flash 支持思考模型
         response_format: str = "text",
         max_tokens: int = 2000,
         temperature: float = 0.7,
         max_retries: int = 3,
         thinking_budget: Optional[int] = 1024,  # 🆕 思考预算，默认 1024 tokens
-        return_thinking: bool = True  # 🆕 是否返回思考过程
+        return_thinking: bool = True,  # 🆕 是否返回思考过程
+        file_uris: Optional[List[str]] = None  # 🆕 支持多模态输入（图片/文档 URI）
     ) -> Dict[str, Any]:
         """
-        生成文本内容（异步）- 🆕 支持思考模型
+        生成文本内容（异步）- 🆕 支持思考模型和多模态输入
         
         Args:
             prompt: 提示词
-            model: 模型名称，默认 gemini-2.5-flash-lite
+            model: 模型名称，默认 gemini-2.5-flash （2.0 Flash Exp）
             response_format: 响应格式，"text" 或 "json"
             max_tokens: 最大 token 数
             temperature: 温度参数（0-1），越高越随机
             max_retries: 最大重试次数
             thinking_budget: 思考预算（tokens），0 = 无思考，1024 = 中等，最大 24576
             return_thinking: 是否返回思考过程
+            file_uris: GCS 文件 URI 列表，支持图片和文档
         
         Returns:
             Dict[str, Any]: 包含以下键：
@@ -219,34 +298,69 @@ class GeminiClient:
             "max_output_tokens": max_tokens,
         }
         
-        # 🆕 添加思考配置（Gemini 2.5 Flash Lite）
-        if thinking_budget is not None and thinking_budget > 0:
-            config_kwargs["thinkingConfig"] = types.ThinkingConfig(
-                thinkingBudget=thinking_budget,  # 注意：使用 camelCase
-                includeThoughts=return_thinking  # 是否返回思考过程
-            )
-            logger.info(f"🧠 Thinking mode enabled: budget={thinking_budget} tokens, includeThoughts={return_thinking}")
+        # 🆕 思考配置：当 thinking_budget=0 时禁用思考模式
+        # 这对于需要更多输出 tokens 的场景很重要（如复杂数学题解答）
+        if "2.5" in model and thinking_budget is not None:
+            try:
+                if thinking_budget == 0:
+                    # 禁用思考模式
+                    config_kwargs["thinking_config"] = types.ThinkingConfig(
+                        thinking_budget=0
+                    )
+                    logger.info(f"🧠 Thinking disabled (budget=0)")
+                elif thinking_budget > 0:
+                    # 启用思考模式并设置预算
+                    config_kwargs["thinking_config"] = types.ThinkingConfig(
+                        thinking_budget=thinking_budget
+                    )
+                    logger.info(f"🧠 Thinking enabled (budget={thinking_budget})")
+            except Exception as e:
+                logger.warning(f"⚠️ ThinkingConfig not supported in this SDK version: {e}")
         
         config = types.GenerateContentConfig(**config_kwargs)
+        
+        # 🆕 构建多模态内容（支持图片/文档 + 文字）
+        contents = self._build_multimodal_contents(prompt, file_uris)
         
         # 重试逻辑
         for attempt in range(max_retries):
             try:
-                logger.info(f"🤖 Calling Gemini API: model={model}, tokens<={max_tokens}")
+                if file_uris:
+                    logger.info(f"🤖 Calling Gemini API: model={model}, tokens<={max_tokens}, files={len(file_uris)}")
+                else:
+                    logger.info(f"🤖 Calling Gemini API: model={model}, tokens<={max_tokens}")
                 start_time = time.time()
                 
-                # 使用异步客户端调用 API
+                # 使用异步客户端调用 API（支持多模态）
                 response = await self.async_client.models.generate_content(
                     model=model,
-                    contents=prompt,
+                    contents=contents,
                     config=config
                 )
                 
-                # 检查响应
-                if not response.text:
-                    raise ValueError("Empty response from Gemini API")
+                # 🆕 改进的响应检查
+                raw_text = getattr(response, 'text', None) or ""
                 
-                result = response.text.strip()
+                if not raw_text or not raw_text.strip():
+                    # 🆕 空响应时，检查是否有 candidates
+                    if hasattr(response, 'candidates') and response.candidates:
+                        # 尝试从 candidates 提取内容
+                        for candidate in response.candidates:
+                            if hasattr(candidate, 'content') and candidate.content:
+                                parts = getattr(candidate.content, 'parts', [])
+                                for part in parts:
+                                    if hasattr(part, 'text') and part.text:
+                                        raw_text = part.text
+                                        break
+                    
+                    if not raw_text or not raw_text.strip():
+                        logger.warning(f"⚠️ Empty response from Gemini (attempt {attempt + 1}/{max_retries})")
+                        if attempt < max_retries - 1:
+                            time.sleep(2)
+                            continue  # 重试
+                        raise ValueError("Empty response from Gemini API after all retries")
+                
+                result = raw_text.strip()
                 elapsed = time.time() - start_time
                 
                 # 🆕 提取思考过程
@@ -284,25 +398,80 @@ class GeminiClient:
                 
                 # 如果是 JSON 格式，尝试解析验证
                 if response_format == "json":
+                    # 🆕 先检查是否为空
+                    if not result or not result.strip():
+                        logger.warning(f"⚠️ Empty result before JSON extraction (attempt {attempt + 1}/{max_retries})")
+                        if attempt < max_retries - 1:
+                            time.sleep(2)
+                            continue  # 重试
+                        raise ValueError("Empty response cannot be parsed as JSON")
+                    
                     result = self._extract_json(result)
+                    
+                    # 🆕 提取后再次检查
+                    if not result or not result.strip():
+                        logger.warning(f"⚠️ Empty result after JSON extraction (attempt {attempt + 1}/{max_retries})")
+                        if attempt < max_retries - 1:
+                            time.sleep(2)
+                            continue  # 重试
+                        raise ValueError("No valid JSON found in response")
+                    
                     try:
                         # 验证是否为有效 JSON
                         json.loads(result)
                         # ✅ 验证成功，继续到最后返回字典格式
                     except json.JSONDecodeError as json_err:
-                        # JSON解析失败，尝试修复
+                        # JSON解析失败，记录原始响应
+                        logger.warning(f"⚠️ JSON parsing failed (attempt {attempt + 1}/{max_retries}): {json_err}")
+                        logger.warning(f"📝 Raw response ({len(result)} chars): {repr(result[:100])}")
+                        
+                        # 🆕 检测垃圾响应（非常短或明显不完整）
+                        is_garbage = (
+                            len(result.strip()) < 15 or  # 太短
+                            result.strip().count('{') != result.strip().count('}') or  # 括号不匹配
+                            ('"intent"' not in result and '"topic"' not in result)  # 缺少关键字段
+                        )
+                        
+                        if is_garbage:
+                            logger.warning(f"🗑️ Detected garbage response (len={len(result)}), using fallback directly")
+                            logger.debug(f"📝 Garbage content: {repr(result[:50])}")
+                            
+                            # 🆕 对于垃圾响应，安全地返回 'other' 意图
+                            # 不尝试推断，因为 prompt 包含所有意图关键词
+                            result = json.dumps({
+                                "intent": "other",
+                                "topic": None,
+                                "confidence": 0.70,  # 足够高的置信度，避免触发 clarification
+                                "note": "Fallback due to garbage LLM response"
+                            })
+                            logger.info(f"✅ Using fallback intent: other (garbage response)")
+                            # 🆕 直接返回，而不是 break（避免 break 后没有 return）
+                            return {
+                                "content": result,
+                                "thinking": thinking_process if 'thinking_process' in dir() else None,
+                                "usage": usage_stats if 'usage_stats' in dir() else {}
+                            }
+                        
                         if attempt == max_retries - 1:
-                            logger.warning(f"⚠️ JSON parsing failed, attempting to fix...")
+                            logger.warning(f"⚠️ Final attempt: trying to fix JSON...")
                             try:
                                 fixed_result = self._try_fix_json(result)
                                 json.loads(fixed_result)
                                 logger.info(f"✅ JSON auto-fixed successfully")
-                                result = fixed_result  # 🔧 修复：更新result，不直接返回
-                            except:
-                                logger.error(f"❌ Failed to fix JSON")
-                                raise ValueError(f"Invalid JSON response: {str(json_err)}")
+                                result = fixed_result
+                            except Exception as fix_err:
+                                logger.error(f"❌ Failed to fix JSON: {fix_err}")
+                                # 🆕 最后一招：返回一个默认的 JSON 结构
+                                logger.warning(f"⚠️ Returning fallback JSON response")
+                                result = json.dumps({
+                                    "intent": "other",
+                                    "topic": None,
+                                    "confidence": 0.70,  # 🆕 足够高的置信度，避免触发 clarification
+                                    "error": "JSON parsing failed"
+                                })
                         else:
-                            raise json_err
+                            time.sleep(2)
+                            continue  # 重试
                 
                 # 🆕 返回字典格式（包含思考过程）
                 return {
@@ -331,6 +500,227 @@ class GeminiClient:
         
         raise Exception("Failed to generate content after all retries")
     
+    def _build_multimodal_contents(self, prompt: str, file_uris: Optional[List[str]] = None) -> Any:
+        """
+        🆕 构建多模态内容（支持图片/文档 + 文字）
+        
+        Args:
+            prompt: 文字提示
+            file_uris: GCS 文件 URI 列表
+        
+        Returns:
+            内容列表或纯文字
+        """
+        if not file_uris:
+            return prompt
+        
+        # 构建多模态内容
+        parts = []
+        
+        for uri in file_uris:
+            # 根据文件扩展名确定 MIME 类型
+            mime_type = self._get_mime_type(uri)
+            
+            if mime_type and mime_type.startswith("image/"):
+                try:
+                    # 🆕 从 GCS 下载图片并转为 base64
+                    image_data = self._download_gcs_image(uri)
+                    if image_data:
+                        # 使用 PIL Image 或直接用 bytes
+                        part = types.Part.from_bytes(data=image_data, mime_type=mime_type)
+                        parts.append(part)
+                        logger.info(f"📎 Added image to multimodal content: {uri} ({mime_type}, {len(image_data)} bytes)")
+                    else:
+                        logger.warning(f"⚠️ Failed to download image: {uri}")
+                except Exception as e:
+                    logger.warning(f"⚠️ Failed to add image {uri}: {e}")
+            elif mime_type and mime_type == "application/pdf":
+                # 🆕 支持 PDF 文件
+                try:
+                    pdf_data = self._download_file_from_gcs(uri)
+                    if pdf_data:
+                        part = types.Part.from_bytes(data=pdf_data, mime_type=mime_type)
+                        parts.append(part)
+                        logger.info(f"📎 Added PDF to multimodal content: {uri} ({mime_type}, {len(pdf_data)} bytes)")
+                    else:
+                        logger.warning(f"⚠️ Failed to download PDF: {uri}")
+                except Exception as e:
+                    logger.warning(f"⚠️ Failed to add PDF {uri}: {e}")
+            elif mime_type and mime_type in ["text/plain", "application/msword", 
+                                              "application/vnd.openxmlformats-officedocument.wordprocessingml.document"]:
+                # 🆕 支持文本文件和 Word 文档
+                try:
+                    file_data = self._download_file_from_gcs(uri)
+                    if file_data:
+                        # 对于文本文件，尝试解码并作为文本添加
+                        if mime_type == "text/plain":
+                            try:
+                                text_content = file_data.decode('utf-8')
+                                parts.append(f"[文件内容 - {uri.split('/')[-1]}]:\n{text_content}")
+                                logger.info(f"📎 Added text file to content: {uri} ({len(text_content)} chars)")
+                            except:
+                                part = types.Part.from_bytes(data=file_data, mime_type=mime_type)
+                                parts.append(part)
+                                logger.info(f"📎 Added text file as binary: {uri}")
+                        else:
+                            # Word 文档作为二进制处理
+                            part = types.Part.from_bytes(data=file_data, mime_type=mime_type)
+                            parts.append(part)
+                            logger.info(f"📎 Added document to multimodal content: {uri} ({mime_type}, {len(file_data)} bytes)")
+                    else:
+                        logger.warning(f"⚠️ Failed to download file: {uri}")
+                except Exception as e:
+                    logger.warning(f"⚠️ Failed to add file {uri}: {e}")
+            elif mime_type:
+                # 其他文件类型 - 尝试通用处理
+                try:
+                    file_data = self._download_file_from_gcs(uri)
+                    if file_data:
+                        part = types.Part.from_bytes(data=file_data, mime_type=mime_type)
+                        parts.append(part)
+                        logger.info(f"📎 Added file to multimodal content: {uri} ({mime_type}, {len(file_data)} bytes)")
+                    else:
+                        logger.warning(f"⚠️ Failed to download file: {uri}")
+                except Exception as e:
+                    logger.warning(f"⚠️ Failed to add file {uri}: {e}")
+            else:
+                logger.warning(f"⚠️ Unsupported file type: {uri}")
+        
+        # 添加文字提示
+        parts.append(prompt)
+        
+        return parts
+    
+    def _convert_gcs_to_https(self, gcs_uri: str) -> Optional[str]:
+        """
+        将 GCS URI 转换为 HTTPS URL
+        
+        Args:
+            gcs_uri: GCS URI (gs://studyx_test/temp/xxx/yyy.jpg)
+        
+        Returns:
+            HTTPS URL (https://files.istudyx.com/temp/xxx/yyy.jpg)
+        """
+        if not gcs_uri.startswith("gs://"):
+            return None
+        
+        # gs://studyx_test/temp/8c77f68a/xxx.jpg -> temp/8c77f68a/xxx.jpg
+        path = gcs_uri[5:]  # 去掉 "gs://"
+        parts = path.split("/", 1)
+        if len(parts) < 2:
+            return None
+        
+        bucket_name = parts[0]
+        blob_path = parts[1]
+        
+        # 🆕 特殊处理 studyx_test bucket -> files.istudyx.com
+        if bucket_name == "studyx_test":
+            return f"https://files.istudyx.com/{blob_path}"
+        
+        # 其他 bucket 使用 Google Cloud Storage 公开 URL
+        return f"https://storage.googleapis.com/{bucket_name}/{blob_path}"
+    
+    def _download_file_from_gcs(self, gcs_uri: str) -> Optional[bytes]:
+        """
+        从 GCS 下载文件（优先使用 HTTPS URL，无需认证）
+        支持图片、PDF、文档等各种文件类型
+        
+        Args:
+            gcs_uri: GCS URI (gs://bucket/path/to/file)
+        
+        Returns:
+            文件二进制数据或 None
+        """
+        import requests
+        
+        try:
+            # 🆕 优先转换为 HTTPS URL 下载（无需 GCS 认证）
+            https_url = self._convert_gcs_to_https(gcs_uri)
+            if https_url:
+                logger.info(f"🔄 Converting GCS URI to HTTPS: {gcs_uri} -> {https_url}")
+                response = requests.get(https_url, timeout=60)  # 文件可能较大，增加超时
+                if response.status_code == 200:
+                    file_data = response.content
+                    logger.info(f"✅ Downloaded file via HTTPS: {https_url} ({len(file_data)} bytes)")
+                    return file_data
+                else:
+                    logger.warning(f"⚠️ HTTPS download failed ({response.status_code}), trying GCS client...")
+            
+            # Fallback: 使用 GCS 客户端（需要认证）
+            from google.cloud import storage
+            
+            # 解析 GCS URI
+            if not gcs_uri.startswith("gs://"):
+                logger.error(f"❌ Invalid GCS URI: {gcs_uri}")
+                return None
+            
+            path = gcs_uri[5:]  # 去掉 "gs://"
+            parts = path.split("/", 1)
+            if len(parts) < 2:
+                logger.error(f"❌ Invalid GCS path: {gcs_uri}")
+                return None
+            
+            bucket_name = parts[0]
+            blob_name = parts[1]
+            
+            # 下载文件
+            client = storage.Client()
+            bucket = client.bucket(bucket_name)
+            blob = bucket.blob(blob_name)
+            
+            file_data = blob.download_as_bytes()
+            logger.info(f"✅ Downloaded file from GCS: {gcs_uri} ({len(file_data)} bytes)")
+            return file_data
+            
+        except Exception as e:
+            logger.error(f"❌ Failed to download file: {gcs_uri}, error: {e}")
+            return None
+    
+    def _download_gcs_image(self, gcs_uri: str) -> Optional[bytes]:
+        """
+        从 GCS 下载图片（调用通用文件下载方法）
+        
+        Args:
+            gcs_uri: GCS URI (gs://bucket/path/to/image.jpg)
+        
+        Returns:
+            图片二进制数据或 None
+        """
+        return self._download_file_from_gcs(gcs_uri)
+    
+    def _get_mime_type(self, uri: str) -> Optional[str]:
+        """
+        根据文件 URI 获取 MIME 类型
+        
+        Args:
+            uri: 文件 URI
+        
+        Returns:
+            MIME 类型或 None
+        """
+        uri_lower = uri.lower()
+        
+        # 图片类型
+        if uri_lower.endswith('.jpg') or uri_lower.endswith('.jpeg'):
+            return "image/jpeg"
+        elif uri_lower.endswith('.png'):
+            return "image/png"
+        elif uri_lower.endswith('.gif'):
+            return "image/gif"
+        elif uri_lower.endswith('.webp'):
+            return "image/webp"
+        
+        # 文档类型
+        elif uri_lower.endswith('.pdf'):
+            return "application/pdf"
+        elif uri_lower.endswith('.txt'):
+            return "text/plain"
+        
+        # 未知类型 - 尝试作为文本处理
+        else:
+            logger.warning(f"⚠️ Unknown file type for {uri}, treating as text/plain")
+            return "text/plain"
+    
     def _enhance_json_prompt(self, prompt: str) -> str:
         """
         增强 prompt 以获得 JSON 格式输出
@@ -354,9 +744,19 @@ Your JSON response:"""
     
     def _try_fix_json(self, text: str) -> str:
         """
-        尝试修复常见的 JSON 错误
+        尝试修复常见的 JSON 错误（增强版）
+        
+        处理的错误类型：
+        1. Markdown 代码块
+        2. 注释 (// 和 /* */)
+        3. 尾随逗号
+        4. 单引号
+        5. 未终止的字符串 (Unterminated string)
+        6. 不完整的 JSON
         """
         import re
+        
+        original_text = text  # 保存原始文本用于调试
         
         # 移除可能的 markdown 代码块
         text = text.strip()
@@ -385,6 +785,38 @@ Your JSON response:"""
         # 简单策略：只替换键名的单引号
         text = re.sub(r"'([^']*)'(\s*):", r'"\1"\2:', text)
         
+        # 🆕 处理 Unterminated string 错误
+        # 常见情况：JSON 被截断，字符串没有结束引号
+        # 尝试在合适的位置补充引号和括号
+        
+        # 检查是否有未闭合的字符串
+        in_string = False
+        escape_next = False
+        last_quote_pos = -1
+        
+        for i, char in enumerate(text):
+            if escape_next:
+                escape_next = False
+                continue
+            if char == '\\':
+                escape_next = True
+                continue
+            if char == '"':
+                in_string = not in_string
+                if in_string:
+                    last_quote_pos = i
+        
+        # 如果字符串未闭合，尝试修复
+        if in_string and last_quote_pos >= 0:
+            # 找到最后一个有效的位置（非转义字符）
+            # 在字符串末尾添加引号
+            text = text.rstrip()
+            # 移除末尾可能的不完整转义字符
+            while text.endswith('\\'):
+                text = text[:-1]
+            text += '"'
+            logger.debug(f"🔧 Fixed unterminated string by adding closing quote")
+        
         # 尝试找到最后一个完整的 JSON 对象或数组
         # 从后往前找最后一个 } 或 ]
         last_brace = text.rfind('}')
@@ -396,6 +828,39 @@ Your JSON response:"""
         elif last_bracket > last_brace:
             # 数组
             text = text[:last_bracket + 1]
+        else:
+            # 🆕 没有找到完整的括号，尝试补充
+            # 检查开始是对象还是数组
+            first_brace = text.find('{')
+            first_bracket = text.find('[')
+            
+            if first_brace >= 0 and (first_bracket < 0 or first_brace < first_bracket):
+                # 是对象，计算需要补充的 }
+                open_count = text.count('{') - text.count('}')
+                if open_count > 0:
+                    text += '}' * open_count
+                    logger.debug(f"🔧 Added {open_count} closing braces")
+            elif first_bracket >= 0:
+                # 是数组，计算需要补充的 ]
+                open_count = text.count('[') - text.count(']')
+                if open_count > 0:
+                    text += ']' * open_count
+                    logger.debug(f"🔧 Added {open_count} closing brackets")
+        
+        # 🆕 特殊情况：如果文本非常短且像是被截断的 intent 响应
+        # 直接构造一个默认响应
+        if len(text) < 20 and '{' not in text:
+            logger.warning(f"⚠️ Text too short to be valid JSON: {text[:50]}")
+            # 尝试从原始文本中提取可能的 intent 关键词
+            text_lower = original_text.lower()
+            if 'quiz' in text_lower or '题' in original_text:
+                return '{"intent": "quiz_request", "topic": null, "confidence": 0.6}'
+            elif 'flashcard' in text_lower or '闪卡' in original_text or '卡片' in original_text:
+                return '{"intent": "flashcard_request", "topic": null, "confidence": 0.6}'
+            elif 'explain' in text_lower or '讲解' in original_text or '解释' in original_text:
+                return '{"intent": "explain_request", "topic": null, "confidence": 0.6}'
+            else:
+                return '{"intent": "other", "topic": null, "confidence": 0.5}'
         
         return text
     
@@ -485,7 +950,7 @@ Your JSON response:"""
     async def generate_json(
         self,
         prompt: str,
-        model: str = "gemini-2.0-flash-exp",
+        model: str = "gemini-2.5-flash",
         max_tokens: int = 2000,
         temperature: float = 0.7,
         max_retries: int = 3
@@ -515,7 +980,7 @@ Your JSON response:"""
     async def generate_batch(
         self,
         prompts: List[str],
-        model: str = "gemini-2.0-flash-exp",
+        model: str = "gemini-2.5-flash",
         **kwargs
     ) -> List[str]:
         """
@@ -537,7 +1002,7 @@ Your JSON response:"""
         
         return results
     
-    def get_model_info(self, model_name: str = "gemini-2.0-flash-exp") -> Dict[str, Any]:
+    def get_model_info(self, model_name: str = "gemini-2.5-flash") -> Dict[str, Any]:
         """
         获取模型信息
         

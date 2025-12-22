@@ -61,7 +61,8 @@ class MarkdownFormatter:
 """
         
         # 添加响应元信息
-        topic = intent.get("topic", agent_response.get("topic", "N/A"))
+        # 🆕 优先从 agent_response 获取 topic（实际 API 返回的），再 fallback 到 intent
+        topic = agent_response.get("topic") or intent.get("topic") or "N/A"
         skill = agent_response.get("skill", "unknown")
         
         md += f"**Type**: {response_type} | **Topic**: {topic} | **Skill**: {skill}"
@@ -146,40 +147,92 @@ class MarkdownFormatter:
         return md
     
     def _format_quiz(self, content: Dict[str, Any]) -> str:
-        """格式化 quiz"""
+        """格式化 quiz - 🔥 兼容新格式 (外部API) 和旧格式 (LLM)"""
         md = ""
+        
+        # 标题（新格式使用 title，旧格式使用 subject）
+        title = content.get("title") or content.get("subject", "")
+        if title:
+            md += f"### 📝 {title}\n\n"
         
         questions = content.get("questions", [])
         
         for i, q in enumerate(questions, 1):
-            question_type = q.get("type", "unknown")
+            # 🔥 兼容新旧格式：question (新) vs question_text (旧)
+            question_text = q.get("question") or q.get("question_text", "N/A")
             
-            md += f"#### Question {i} ({self._translate_question_type(question_type)})\n"
-            md += f"**题目**：{q.get('question', 'N/A')}\n\n"
+            # 🔥 兼容新旧格式：answer_options (新) vs options (旧)
+            answer_options = q.get("answer_options") or q.get("options", [])
             
-            if question_type == "multiple_choice":
+            # 检测是否是新格式（answer_options 包含 is_correct）
+            is_new_format = answer_options and isinstance(answer_options[0], dict) and "is_correct" in answer_options[0]
+            
+            # 获取题目类型
+            question_type = q.get("question_type", "choice" if answer_options else "unknown")
+            
+            md += f"#### Question {i}\n"
+            md += f"**题目**：{question_text}\n\n"
+            
+            if is_new_format:
+                # 🆕 新格式：外部 API 返回的格式
                 md += "**选项**：\n"
-                for option in q.get("options", []):
-                    label = option.get("label", "")
-                    text = option.get("text", "")
-                    is_correct = label == q.get("correct_answer", "")
-                    md += f"- {label}. {text} {'✅' if is_correct else ''}\n"
+                for opt_idx, opt in enumerate(answer_options):
+                    label = chr(65 + opt_idx)  # A, B, C, D...
+                    text = opt.get("text", "")
+                    is_correct = opt.get("is_correct", False)
+                    rationale = opt.get("rationale", "")
+                    
+                    if is_correct:
+                        md += f"- **{label}. {text}** ✅\n"
+                    else:
+                        md += f"- {label}. {text}\n"
                 md += "\n"
-                md += f"**答案**：{q.get('correct_answer', 'N/A')}\n\n"
+                
+                # 显示提示（如果有）
+                hint = q.get("hint", "")
+                if hint:
+                    md += f"**💡 提示**：{hint}\n\n"
+                
+                # 显示正确答案和解析
+                for opt_idx, opt in enumerate(answer_options):
+                    if opt.get("is_correct"):
+                        label = chr(65 + opt_idx)
+                        md += f"**正确答案**：{label}\n\n"
+                        if opt.get("rationale"):
+                            md += f"**解析**：{opt['rationale']}\n\n"
+                        break
+            
+            elif answer_options:
+                # 旧格式：LLM 返回的格式
+                md += "**选项**：\n"
+                correct_answer = q.get("correct_answer", "")
+                
+                for option in answer_options:
+                    if isinstance(option, str):
+                        label = option[0] if len(option) > 0 and option[0] in "ABCDEFGH" else ""
+                        is_correct = label == correct_answer
+                        md += f"- {option} {'✅' if is_correct else ''}\n"
+                    else:
+                        label = option.get("label", "")
+                        text = option.get("text", "")
+                        is_correct = label == correct_answer
+                        md += f"- {label}. {text} {'✅' if is_correct else ''}\n"
+                md += "\n"
+                md += f"**答案**：{correct_answer}\n\n"
             
             elif question_type == "true_false":
                 correct = q.get("correct_answer", None)
-                if correct is True:
+                if correct is True or correct == "正确":
                     md += "**答案**：正确 ✅\n\n"
-                elif correct is False:
+                elif correct is False or correct == "错误":
                     md += "**答案**：错误 ❌\n\n"
                 else:
                     md += f"**答案**：{correct}\n\n"
             
-            elif question_type == "short_answer":
+            elif question_type in ["short_answer", "fill_in"]:
                 md += f"**参考答案**：{q.get('correct_answer', 'N/A')}\n\n"
             
-            # 解析
+            # 解析（旧格式）
             if "explanation" in q:
                 md += f"**解析**：{q['explanation']}\n\n"
             
@@ -190,18 +243,27 @@ class MarkdownFormatter:
     def _translate_question_type(self, qtype: str) -> str:
         """翻译题型"""
         mapping = {
+            # 标准格式
             "multiple_choice": "选择题",
             "true_false": "判断题",
             "short_answer": "简答题",
-            "fill_in_blank": "填空题"
+            "fill_in_blank": "填空题",
+            # LLM 实际返回的格式（兼容）
+            "choice": "选择题",
+            "fill_in": "填空题"
         }
         return mapping.get(qtype, qtype)
     
     def _format_flashcard(self, content: Dict[str, Any]) -> str:
-        """格式化 flashcard"""
+        """格式化 flashcard - 🔥 新格式 (title + cardList)"""
         md = ""
         
-        cards = content.get("cards", [])
+        # 标题（新格式使用 title，旧格式使用 topic）
+        title = content.get("title") or content.get("topic", "闪卡集合")
+        md += f"### 📚 {title}\n\n"
+        
+        # 兼容新旧格式
+        cards = content.get("cardList") or content.get("cards", [])
         
         for i, card in enumerate(cards, 1):
             md += f"#### 🃏 Flashcard {i}\n\n"
@@ -212,16 +274,7 @@ class MarkdownFormatter:
             # 背面
             md += f"**背面**：\n```\n{card.get('back', 'N/A')}\n```\n\n"
             
-            # 难度和标签
-            difficulty = card.get("difficulty", "medium")
-            tags = card.get("tags", [])
-            
-            md += f"**难度**: {self._translate_difficulty(difficulty)}"
-            
-            if tags:
-                md += f" | **标签**: {', '.join(['#' + tag for tag in tags])}"
-            
-            md += "\n\n---\n\n"
+            md += "---\n\n"
         
         return md
     
@@ -291,29 +344,49 @@ class MarkdownFormatter:
         """格式化 learning bundle (plan skill)"""
         md = ""
         
-        md += "#### 📦 学习包内容\n\n"
+        # 显示学习包标题
+        topic = content.get("topic", "学习内容")
+        md += f"#### 📦 学习包: {topic}\n\n"
         
-        # 遍历 plan 中的各个步骤结果
-        steps = content.get("steps", [])
+        # 显示学习时间
+        time_mins = content.get("estimated_time_minutes", 0)
+        if time_mins:
+            md += f"⏱️ 预计学习时间: {time_mins} 分钟\n\n"
         
-        for i, step in enumerate(steps, 1):
-            step_type = step.get("type", "unknown")
-            step_result = step.get("result", {})
+        # 🔥 兼容两种格式：steps (旧) 和 components (新)
+        components = content.get("components", content.get("steps", []))
+        
+        for i, comp in enumerate(components, 1):
+            # 兼容两种键名：component_type (新) 和 type (旧)
+            comp_type = comp.get("component_type", comp.get("type", "unknown"))
+            # 兼容两种键名：content (新) 和 result (旧)
+            comp_content = comp.get("content", comp.get("result", {}))
             
-            md += f"##### {i}. {self._translate_step_type(step_type)}\n"
+            md += f"##### {i}. {self._translate_step_type(comp_type)}\n\n"
             
-            # 根据步骤类型格式化
-            if step_type == "explain":
-                md += self._format_explanation(step_result)
-            elif step_type == "quiz":
-                md += self._format_quiz(step_result)
-            elif step_type == "flashcard":
-                md += self._format_flashcard(step_result)
-            elif step_type == "notes":
-                md += self._format_notes(step_result)
-            elif step_type == "mindmap":
-                md += self._format_mindmap(step_result)
+            # 根据组件类型格式化
+            if comp_type in ["explain", "explanation"]:
+                md += self._format_explanation(comp_content)
+            elif comp_type in ["quiz", "quiz_set"]:
+                md += self._format_quiz(comp_content)
+            elif comp_type in ["flashcard", "flashcard_set"]:
+                md += self._format_flashcard(comp_content)
+            elif comp_type == "notes":
+                md += self._format_notes(comp_content)
+            elif comp_type == "mindmap":
+                md += self._format_mindmap(comp_content)
+            else:
+                # 未知类型，显示 JSON
+                md += f"```json\n{json.dumps(comp_content, ensure_ascii=False, indent=2)[:500]}...\n```\n"
             
+            md += "\n---\n\n"
+        
+        # 显示学习路径
+        learning_path = content.get("learning_path", [])
+        if learning_path:
+            md += "#### 📚 学习建议\n"
+            for step in learning_path[:3]:  # 只显示前3条
+                md += f"- {step}\n"
             md += "\n"
         
         return md
