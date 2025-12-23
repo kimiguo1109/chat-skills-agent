@@ -231,6 +231,129 @@ async def _create_regenerate_branch(
     return new_branch
 
 
+async def _create_edit_branch(
+    memory_manager: MemoryManager,
+    user_id: str,
+    session_id: str,
+    turn_id: int,
+    new_message: str
+) -> Optional[str]:
+    """
+    🌳 为 edit 创建新分支
+    
+    Edit 与 Regenerate 的区别：
+    - Edit: 用户修改了问题内容，创建新分支
+    - Regenerate: 问题不变，只是重新生成回答
+    
+    Returns: 新分支名称，或 None 如果失败
+    """
+    tree = await _load_version_tree(memory_manager, user_id, session_id)
+    
+    # 生成新分支名称 - 使用 edit 前缀区分
+    branch_count = len([b for b in tree["branches"] if b.startswith(f"edit_{turn_id}_")])
+    new_branch = f"edit_{turn_id}_v{branch_count + 2}"  # v2, v3, v4...
+    
+    current_branch = tree["active_branch"]
+    
+    # 创建新分支
+    tree["branches"][new_branch] = {
+        "created_at": datetime.now().isoformat(),
+        "parent_branch": current_branch,
+        "fork_from_turn": turn_id,
+        "edit_type": "question_modified",  # 标记这是问题修改
+        "original_message": None,  # 将在下面填充
+        "new_message": new_message,
+        "turns": []
+    }
+    
+    # 复制 fork 点之前的 turns 到新分支
+    if current_branch in tree["branches"]:
+        parent_turns = tree["branches"][current_branch].get("turns", [])
+        tree["branches"][new_branch]["turns"] = [t for t in parent_turns if t < turn_id]
+    
+    # 记录 turn 的版本信息
+    turn_key = str(turn_id)
+    if turn_key not in tree["turns"]:
+        tree["turns"][turn_key] = {"versions": {}}
+    
+    # 保存原版本信息（如果还没保存）
+    if current_branch not in tree["turns"][turn_key]["versions"]:
+        # 尝试从 MD 文件获取原始消息
+        original_msg = await _get_turn_message(memory_manager, user_id, session_id, turn_id)
+        tree["turns"][turn_key]["versions"][current_branch] = {
+            "timestamp": datetime.now().isoformat(),
+            "user_message": original_msg or "",
+            "status": "original"
+        }
+        tree["branches"][new_branch]["original_message"] = original_msg
+    
+    # 记录新版本信息
+    tree["turns"][turn_key]["versions"][new_branch] = {
+        "timestamp": datetime.now().isoformat(),
+        "user_message": new_message,
+        "status": "edited"
+    }
+    
+    # 切换到新分支
+    tree["active_branch"] = new_branch
+    
+    await _save_version_tree(memory_manager, user_id, session_id, tree)
+    
+    logger.info(f"🌳 Created edit branch: {new_branch} (forked from {current_branch} at turn {turn_id}, new message: '{new_message[:30]}...')")
+    return new_branch
+
+
+async def _switch_to_version_path(
+    memory_manager: MemoryManager,
+    user_id: str,
+    session_id: str,
+    version_path: str
+) -> Optional[str]:
+    """
+    🌳 根据 version_path 切换到对应的分支
+    
+    version_path 格式: "turn_id:version_id" (如 "1:2" 表示 Turn 1 的 version 2)
+    
+    Returns: 切换后的分支名称，或 None 如果失败
+    """
+    if not version_path:
+        return None
+    
+    try:
+        tree = await _load_version_tree(memory_manager, user_id, session_id)
+        
+        # 解析 version_path
+        parts = version_path.split(",")
+        for part in parts:
+            if ":" not in part:
+                continue
+            turn_id_str, version_id_str = part.split(":")
+            turn_id = int(turn_id_str)
+            version_id = int(version_id_str)
+            
+            turn_key = str(turn_id)
+            if turn_key not in tree["turns"]:
+                logger.warning(f"⚠️ Turn {turn_id} not found in tree")
+                continue
+            
+            # 找到对应版本的分支
+            versions = tree["turns"][turn_key].get("versions", {})
+            branch_list = list(versions.keys())
+            
+            if version_id > 0 and version_id <= len(branch_list):
+                target_branch = branch_list[version_id - 1]
+                tree["active_branch"] = target_branch
+                await _save_version_tree(memory_manager, user_id, session_id, tree)
+                logger.info(f"🌳 Switched to branch '{target_branch}' via version_path '{version_path}'")
+                return target_branch
+        
+        return tree["active_branch"]
+        
+    except Exception as e:
+        logger.error(f"❌ Failed to switch version path: {e}")
+        return None
+
+
 async def _add_turn_to_branch(
     memory_manager: MemoryManager,
     user_id: str,
@@ -334,6 +457,8 @@ class WebChatRequest(BaseModel):
     turn_id: Optional[int] = Field(None, description="Edit/Regenerate 时指定的轮次号")
     # 🌳 分支管理
     branch: Optional[str] = Field(None, description="指定分支名称（不传则使用当前活动分支）")
+    # 🌳 版本路径（用于在特定版本下继续对话）
+    version_path: Optional[str] = Field(None, description="版本路径，格式: 'turn_id:version_id'，如 '1:2' 表示在 Turn 1 的 version 2 下继续对话")
     
     # 通用参数（与 App 端一致）
     file_uri: Optional[str] = Field(None, description="单个 GCS 文件 URI")
@@ -390,7 +515,9 @@ async def generate_sse_stream(
     qid: Optional[str] = None,
     question_context: Optional[str] = None,
     token: Optional[str] = None,
-    environment: str = "test"  # 🆕 环境标识
+    environment: str = "test",  # 🆕 环境标识
+    # 🌳 版本路径（用于在特定版本下继续对话）
+    version_path: Optional[str] = None
 ) -> AsyncGenerator[str, None]:
     """
     生成 SSE 事件流（使用完整的 Skill Pipeline）
@@ -408,21 +535,40 @@ async def generate_sse_stream(
         # 1. 发送开始事件
         yield f"data: {json.dumps({'type': 'start', 'action': action.value, 'turn_id': turn_id, 'timestamp': datetime.now().isoformat()})}\n\n"
         
-        # 2. 处理 Edit/Regenerate
+        # 2. 🌳 处理版本路径切换（在特定版本下继续对话）
+        if version_path and action == ActionType.SEND:
+            switched_branch = await _switch_to_version_path(
+                orchestrator.memory_manager,
+                user_id,
+                session_id,
+                version_path
+            )
+            if switched_branch:
+                logger.info(f"🌳 Continuing conversation in branch: {switched_branch}")
+        
+        # 3. 处理 Edit/Regenerate
         if action == ActionType.EDIT:
             if not turn_id:
                 yield f"data: {json.dumps({'type': 'error', 'message': 'turn_id is required for edit action'})}\n\n"
                 return
             
-            # 截断并保存版本
-            await _truncate_and_save_version(
+            if not message:
+                yield f"data: {json.dumps({'type': 'error', 'message': 'message is required for edit action'})}\n\n"
+                return
+            
+            # 🌳 树状版本管理：Edit 创建新分支（保留原问题和后续对话）
+            new_branch = await _create_edit_branch(
                 orchestrator.memory_manager,
                 user_id,
                 session_id,
                 turn_id,
-                action="edit",
-                new_message=message
+                message
             )
+            
+            if new_branch:
+                logger.info(f"🌳 Edit turn {turn_id}: created branch '{new_branch}', new message: '{message[:50]}...'")
+            else:
+                logger.warning(f"⚠️ Failed to create edit branch, continuing anyway")
             
         elif action == ActionType.REGENERATE:
             # 🌳 树状版本管理：Regenerate 创建新分支
@@ -630,7 +776,36 @@ async def generate_sse_stream(
         tree = await _load_version_tree(orchestrator.memory_manager, user_id, session_id)
         active_branch = tree.get("active_branch", "main")
         
-        if action == ActionType.REGENERATE and turn_id:
+        if action == ActionType.EDIT and turn_id:
+            # 🆕 Edit：替换原 turn 而不是追加新 turn
+            try:
+                # 1. 删除新追加的 turn（execute_skill_pipeline 会自动追加）
+                await _delete_last_turn(
+                    orchestrator.memory_manager,
+                    user_id,
+                    session_id
+                )
+                
+                # 2. 替换原 turn 的内容（保存原版本并更新）
+                success = await _save_and_replace_turn_for_edit(
+                    orchestrator.memory_manager,
+                    user_id,
+                    session_id,
+                    turn_id,
+                    message,
+                    text
+                )
+                
+                if success:
+                    actual_turn_id = turn_id  # 返回原 turn ID
+                    logger.info(f"✅ Edit complete: turn {turn_id} replaced with new version")
+                else:
+                    logger.warning(f"⚠️ Edit replacement failed, using new turn {new_turn_id}")
+                    
+            except Exception as edit_err:
+                logger.error(f"❌ Edit post-processing failed: {edit_err}", exc_info=True)
+                
+        elif action == ActionType.REGENERATE and turn_id:
             # Regenerate：新响应已追加为新 turn，记录到版本树
             try:
                 await _add_turn_to_branch(
@@ -682,6 +857,11 @@ async def generate_sse_stream(
         # 如果是 regenerate，标记新分支创建
         if action == ActionType.REGENERATE:
             done_data['branch_created'] = True
+        
+        # 🆕 如果是 edit，标记版本更新
+        if action == ActionType.EDIT:
+            done_data['version_updated'] = True
+            done_data['original_turn_id'] = turn_id  # 原 turn ID
         
         yield f"data: {json.dumps(done_data)}\n\n"
         
@@ -781,6 +961,188 @@ async def _truncate_and_save_version(
         
     except Exception as e:
         logger.error(f"❌ Failed to truncate and save version: {e}")
+        return False
+
+
+async def _delete_last_turn(
+    memory_manager: MemoryManager,
+    user_id: str,
+    session_id: str
+) -> bool:
+    """
+    删除 MD 文件中的最后一个 turn
+    用于 Edit 操作后清理自动追加的新 turn
+    """
+    from pathlib import Path
+    
+    try:
+        artifacts_dir = memory_manager.artifact_storage.base_dir / user_id
+        md_file = artifacts_dir / f"{session_id}.md"
+        
+        if not md_file.exists():
+            return False
+        
+        content = md_file.read_text(encoding='utf-8')
+        
+        # 找到所有 turn
+        turn_pattern = r'## Turn (\d+) - (\d{2}:\d{2}:\d{2})'
+        turns = list(re.finditer(turn_pattern, content))
+        
+        if len(turns) < 2:
+            # 只有一个或没有 turn，不删除
+            return False
+        
+        # 删除最后一个 turn
+        last_turn_start = turns[-1].start()
+        new_content = content[:last_turn_start].rstrip() + "\n\n"
+        
+        md_file.write_text(new_content, encoding='utf-8')
+        
+        # 更新 metadata
+        metadata_file = artifacts_dir / f"{session_id}_metadata.json"
+        if metadata_file.exists():
+            try:
+                metadata = json.loads(metadata_file.read_text(encoding='utf-8'))
+                metadata["turn_count"] = len(turns) - 1
+                metadata["last_updated"] = datetime.now().isoformat()
+                metadata_file.write_text(json.dumps(metadata, ensure_ascii=False, indent=2), encoding='utf-8')
+            except:
+                pass
+        
+        logger.info(f"🗑️ Deleted last turn (turn {len(turns)}), now {len(turns)-1} turns")
+        return True
+        
+    except Exception as e:
+        logger.error(f"❌ Failed to delete last turn: {e}")
+        return False
+
+
+async def _save_and_replace_turn_for_edit(
+    memory_manager: MemoryManager,
+    user_id: str,
+    session_id: str,
+    turn_id: int,
+    new_message: str,
+    new_response: str
+) -> bool:
+    """
+    🆕 Edit 操作：保存原版本并替换 turn 内容
+    
+    实现同一 turn 的多版本管理：
+    1. 保存原 turn 到 versions 文件（作为历史版本）
+    2. 替换 MD 文件中原 turn 的问题和回答
+    3. 不改变 turn 数量，不追加新 turn
+    
+    Returns: True 如果成功
+    """
+    from pathlib import Path
+    
+    try:
+        artifacts_dir = memory_manager.artifact_storage.base_dir / user_id
+        md_file = artifacts_dir / f"{session_id}.md"
+        versions_file = artifacts_dir / f"{session_id}_versions.json"
+        
+        if not md_file.exists():
+            logger.warning(f"⚠️ MD file not found for edit: {md_file}")
+            return False
+        
+        content = md_file.read_text(encoding='utf-8')
+        
+        # 解析 turns
+        turn_pattern = r'## Turn (\d+) - (\d{2}:\d{2}:\d{2})'
+        turns = list(re.finditer(turn_pattern, content))
+        
+        if not turns:
+            logger.warning(f"⚠️ No turns found in MD file")
+            return False
+        
+        # 找到目标 turn
+        target_idx = None
+        for i, match in enumerate(turns):
+            if int(match.group(1)) == turn_id:
+                target_idx = i
+                break
+        
+        if target_idx is None:
+            logger.warning(f"⚠️ Turn {turn_id} not found for edit")
+            return False
+        
+        # 提取原 turn 的内容
+        turn_start = turns[target_idx].start()
+        if target_idx + 1 < len(turns):
+            turn_end = turns[target_idx + 1].start()
+        else:
+            turn_end = len(content)
+        
+        original_turn_content = content[turn_start:turn_end]
+        
+        # 加载或创建版本历史
+        versions = []
+        if versions_file.exists():
+            try:
+                versions = json.loads(versions_file.read_text(encoding='utf-8'))
+            except:
+                versions = []
+        
+        # 检查是否已经保存过这个 turn 的原始版本
+        has_original = any(v.get("turn_id") == turn_id and v.get("is_original", False) for v in versions)
+        
+        if not has_original:
+            # 保存原始版本（第一次编辑时）
+            versions.append({
+                "version_id": len([v for v in versions if v.get("turn_id") == turn_id]) + 1,
+                "turn_id": turn_id,
+                "action": "original",
+                "is_original": True,
+                "timestamp": datetime.now().isoformat(),
+                "content": original_turn_content
+            })
+            logger.info(f"📝 Saved original version of turn {turn_id}")
+        
+        # 保存新版本
+        new_version_id = len([v for v in versions if v.get("turn_id") == turn_id]) + 1
+        timestamp = datetime.now().strftime("%H:%M:%S")
+        
+        # 构建新 turn 内容（保持原格式）
+        new_turn_content = f"""## Turn {turn_id} - {timestamp}
+
+### 👤 User Query
+{new_message}
+
+### 🤖 Agent Response
+**Intent**: edit_response
+**Content Type**: text
+**Topic**: 
+
+**Response**:
+{new_response}
+
+---
+
+"""
+        
+        versions.append({
+            "version_id": new_version_id,
+            "turn_id": turn_id,
+            "action": "edit",
+            "is_original": False,
+            "timestamp": datetime.now().isoformat(),
+            "message": new_message,
+            "response_preview": new_response[:200] if len(new_response) > 200 else new_response
+        })
+        
+        # 写入版本文件
+        versions_file.write_text(json.dumps(versions, ensure_ascii=False, indent=2), encoding='utf-8')
+        
+        # 替换 MD 文件中的 turn 内容
+        new_content = content[:turn_start] + new_turn_content + content[turn_end:]
+        md_file.write_text(new_content, encoding='utf-8')
+        
+        logger.info(f"✅ Edit complete: turn {turn_id} replaced with version {new_version_id}")
+        return True
+        
+    except Exception as e:
+        logger.error(f"❌ Failed to save and replace turn for edit: {e}", exc_info=True)
         return False
 
 
@@ -1374,7 +1736,8 @@ async def web_chat_stream(
                     qid=effective_qid_for_context,
                     question_context=request.question_context,
                     token=token,
-                    environment=env  # 🆕 环境标识
+                    environment=env,  # 🆕 环境标识
+                    version_path=request.version_path  # 🌳 版本路径
                 ):
                     yield event
                 logger.info(f"🔓 [Web] Released lock for session: {session_id}")

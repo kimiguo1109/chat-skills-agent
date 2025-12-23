@@ -426,32 +426,45 @@ class GeminiClient:
                         logger.warning(f"⚠️ JSON parsing failed (attempt {attempt + 1}/{max_retries}): {json_err}")
                         logger.warning(f"📝 Raw response ({len(result)} chars): {repr(result[:100])}")
                         
-                        # 🆕 检测垃圾响应（非常短或明显不完整）
-                        is_garbage = (
-                            len(result.strip()) < 15 or  # 太短
-                            result.strip().count('{') != result.strip().count('}') or  # 括号不匹配
-                            ('"intent"' not in result and '"topic"' not in result)  # 缺少关键字段
-                        )
-                        
-                        if is_garbage:
-                            logger.warning(f"🗑️ Detected garbage response (len={len(result)}), using fallback directly")
-                            logger.debug(f"📝 Garbage content: {repr(result[:50])}")
+                        # 🔧 首先尝试修复 JSON（处理无效转义字符等问题）
+                        try:
+                            fixed_result = self._try_fix_json(result)
+                            json.loads(fixed_result)
+                            logger.info(f"✅ JSON auto-fixed successfully (invalid escape chars etc.)")
+                            result = fixed_result
+                            # 修复成功，跳过后续的垃圾响应检测
+                        except Exception as fix_err:
+                            logger.warning(f"⚠️ JSON fix attempt failed: {fix_err}")
                             
-                            # 🆕 对于垃圾响应，安全地返回 'other' 意图
-                            # 不尝试推断，因为 prompt 包含所有意图关键词
-                            result = json.dumps({
-                                "intent": "other",
-                                "topic": None,
-                                "confidence": 0.70,  # 足够高的置信度，避免触发 clarification
-                                "note": "Fallback due to garbage LLM response"
-                            })
-                            logger.info(f"✅ Using fallback intent: other (garbage response)")
-                            # 🆕 直接返回，而不是 break（避免 break 后没有 return）
-                            return {
-                                "content": result,
-                                "thinking": thinking_process if 'thinking_process' in dir() else None,
-                                "usage": usage_stats if 'usage_stats' in dir() else {}
-                            }
+                            # 🆕 检测垃圾响应（更宽松的检测逻辑）
+                            is_garbage = (
+                                len(result.strip()) < 15 or  # 太短
+                                result.strip().count('{') != result.strip().count('}')  # 括号不匹配
+                                # 移除字段检测，因为不同的 skill 有不同的字段
+                            )
+                            
+                            if is_garbage:
+                                logger.warning(f"🗑️ Detected garbage response (len={len(result)}), using fallback directly")
+                                logger.debug(f"📝 Garbage content: {repr(result[:50])}")
+                                
+                                # 🆕 对于垃圾响应，安全地返回 'other' 意图
+                                result = json.dumps({
+                                    "intent": "other",
+                                    "topic": None,
+                                    "confidence": 0.70,
+                                    "note": "Fallback due to garbage LLM response"
+                                })
+                                logger.info(f"✅ Using fallback intent: other (garbage response)")
+                                return {
+                                    "content": result,
+                                    "thinking": thinking_process if 'thinking_process' in dir() else None,
+                                    "usage": usage_stats if 'usage_stats' in dir() else {}
+                                }
+                            
+                            # 不是垃圾响应，继续重试
+                            if attempt < max_retries - 1:
+                                time.sleep(2)
+                                continue
                         
                         if attempt == max_retries - 1:
                             logger.warning(f"⚠️ Final attempt: trying to fix JSON...")
@@ -754,10 +767,42 @@ Your JSON response:"""
         4. 单引号
         5. 未终止的字符串 (Unterminated string)
         6. 不完整的 JSON
+        7. 🆕 无效的转义字符 (Invalid \escape)
         """
         import re
         
         original_text = text  # 保存原始文本用于调试
+        
+        # 🆕 修复无效的转义字符 (Invalid \escape)
+        # JSON 只允许: \", \\, \/, \b, \f, \n, \r, \t, \uXXXX
+        # 其他的 \x 需要转换为 \\x 或直接移除反斜杠
+        def fix_invalid_escapes(s):
+            """修复 JSON 字符串中的无效转义字符"""
+            result = []
+            i = 0
+            while i < len(s):
+                if s[i] == '\\' and i + 1 < len(s):
+                    next_char = s[i + 1]
+                    # 有效的转义字符
+                    if next_char in '"\\\/bfnrt':
+                        result.append(s[i:i+2])
+                        i += 2
+                    # Unicode 转义
+                    elif next_char == 'u' and i + 5 < len(s):
+                        result.append(s[i:i+6])
+                        i += 6
+                    else:
+                        # 无效的转义字符，移除反斜杠或转换为双反斜杠
+                        # 直接保留原字符，移除反斜杠
+                        result.append(next_char)
+                        i += 2
+                        logger.debug(f"🔧 Fixed invalid escape: \\{next_char} -> {next_char}")
+                else:
+                    result.append(s[i])
+                    i += 1
+            return ''.join(result)
+        
+        text = fix_invalid_escapes(text)
         
         # 移除可能的 markdown 代码块
         text = text.strip()
