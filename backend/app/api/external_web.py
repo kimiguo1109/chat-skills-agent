@@ -2828,9 +2828,9 @@ async def get_chat_history(
                 # 查找原始 item 以获取额外信息
                 original_item = next((item for item in chat_list if item["turn"] == turn_num), {})
                 
-                # 🆕 获取该版本的 feedback
+                # 🆕 获取该版本的 feedback（严格按 version_id 匹配，不 fallback）
                 ver_feedback_key = f"{turn_num}_{selected_version['version_id']}"
-                ver_feedback = feedback_map.get(ver_feedback_key) or original_item.get("feedback")
+                ver_feedback = feedback_map.get(ver_feedback_key)  # 不 fallback，每个版本独立
                 
                 current_chat_list.append({
                     "turn": turn_num,
