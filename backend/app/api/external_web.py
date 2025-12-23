@@ -2600,6 +2600,36 @@ async def get_chat_history(
                     "versions": sorted(versions_list, key=lambda x: x.get("version_id", 0))
                 }
         
+        # 🆕 重构 chat_list：如果有版本历史，用 turn_versions 的完整数据
+        enhanced_chat_list = []
+        for item in filtered_chat_list:
+            turn_num = item["turn"]
+            turn_key = str(turn_num)
+            
+            if turn_key in turn_versions and turn_versions[turn_key]["total_versions"] > 1:
+                # 这个 turn 有多个版本，为每个版本创建一条记录
+                versions = turn_versions[turn_key]["versions"]
+                for v in versions:
+                    enhanced_chat_list.append({
+                        "turn": turn_num,
+                        "version_id": v["version_id"],
+                        "total_versions": len(versions),
+                        "timestamp": v.get("timestamp", item["timestamp"]),
+                        "user_message": v["user_message"],
+                        "assistant_message": v["assistant_message"],
+                        "referenced_text": item.get("referenced_text"),
+                        "files": item.get("files"),
+                        "feedback": item.get("feedback"),
+                        "can_edit": True,
+                        "can_regenerate": True,
+                        "has_versions": True,
+                        "is_original": v.get("is_original", False),
+                        "action": v.get("action", "original")
+                    })
+            else:
+                # 没有版本历史，保持原样
+                enhanced_chat_list.append(item)
+        
         return {
             "code": 0,
             "msg": "Success",
@@ -2608,10 +2638,10 @@ async def get_chat_history(
                 "answer_id": answer_id,
                 "session_id": session_id,
                 "user_id": user_id,
-                # 🆕 当前选中版本路径的对话列表（前端直接渲染）
-                "chat_list": filtered_chat_list,
-                "total": len(filtered_chat_list),
-                # 🆕 完整的对话列表（包含所有版本，供高级用途）
+                # 🆕 包含所有版本的对话列表（前端直接渲染）
+                "chat_list": enhanced_chat_list,
+                "total": len(enhanced_chat_list),
+                # 🆕 完整的对话列表（原始 MD 解析，供参考）
                 "all_turns": chat_list,
                 "all_turns_total": len(chat_list),
                 # 🆕 版本信息（告诉前端哪些 turn 有多个版本可切换）
