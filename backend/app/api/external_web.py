@@ -2347,16 +2347,50 @@ async def get_chat_history(
                 logger.warning(f"⚠️ Failed to parse turn: {e}")
                 continue
         
-        # 🆕 加载版本信息（旧格式兼容）
+        # 🆕 加载版本信息（包含完整的历史版本内容）
         versions_file = md_file.parent / f"{session_id}_versions.json"
         version_turns = set()
+        versions_data = []  # 🆕 保存完整的版本数据
+        
         if versions_file.exists():
             try:
-                versions = json.loads(versions_file.read_text(encoding='utf-8'))
-                for v in versions:
+                versions_data = json.loads(versions_file.read_text(encoding='utf-8'))
+                for v in versions_data:
                     version_turns.add(v.get("turn_id"))
-            except:
-                pass
+                logger.info(f"📜 Loaded {len(versions_data)} versions from versions.json")
+            except Exception as ver_err:
+                logger.warning(f"⚠️ Failed to load versions: {ver_err}")
+        
+        # 🆕 从 versions.json 构建每个 turn 的版本列表
+        turn_versions_map = {}  # {turn_id: [{version_id, user_message, assistant_message, timestamp}]}
+        for v in versions_data:
+            turn_id = v.get("turn_id")
+            if turn_id not in turn_versions_map:
+                turn_versions_map[turn_id] = []
+            
+            # 从 content 字段解析用户消息和助手回复
+            content = v.get("content", "")
+            user_msg = v.get("message", "")  # Edit 时保存的新消息
+            assistant_preview = v.get("response_preview", "")
+            
+            # 如果是原始版本，从 content 中解析
+            if v.get("is_original") and content:
+                user_match = re.search(r'### 👤 User Query\n(.*?)\n\n### 🤖', content, re.DOTALL)
+                if user_match:
+                    user_msg = user_match.group(1).strip()
+                # 从 JSON 块提取助手消息
+                json_match = re.search(r'"text":\s*"((?:[^"\\]|\\.)*)"', content)
+                if json_match:
+                    assistant_preview = json_match.group(1)[:200].replace('\\n', '\n')
+            
+            turn_versions_map[turn_id].append({
+                "version_id": v.get("version_id"),
+                "is_original": v.get("is_original", False),
+                "action": v.get("action"),
+                "timestamp": v.get("timestamp"),
+                "user_message": user_msg,
+                "assistant_preview": assistant_preview
+            })
         
         # 🌳 加载树状版本信息
         tree_file = md_file.parent / f"{session_id}_tree.json"
@@ -2544,6 +2578,15 @@ async def get_chat_history(
                         item["original_turn"] = ft
                         break
         
+        # 🆕 构建 turn_versions：包含每个 turn 的所有历史版本
+        turn_versions = {}
+        for turn_id, versions_list in turn_versions_map.items():
+            if len(versions_list) > 0:
+                turn_versions[str(turn_id)] = {
+                    "total_versions": len(versions_list),
+                    "versions": sorted(versions_list, key=lambda x: x.get("version_id", 0))
+                }
+        
         return {
             "code": 0,
             "msg": "Success",
@@ -2560,9 +2603,11 @@ async def get_chat_history(
                 "all_turns_total": len(chat_list),
                 # 🆕 版本信息（告诉前端哪些 turn 有多个版本可切换）
                 "version_info": version_info if version_info else None,
+                # 🆕 每个 turn 的所有历史版本（包含 user_message 和 assistant_preview）
+                "turn_versions": turn_versions if turn_versions else None,
                 # 🆕 当前选中的版本路径
                 "current_version_path": version_path or "default",
-                "has_versions": len(version_info) > 0
+                "has_versions": len(version_info) > 0 or len(turn_versions) > 0
             }
         }
         

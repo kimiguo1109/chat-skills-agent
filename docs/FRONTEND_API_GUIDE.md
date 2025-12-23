@@ -290,21 +290,66 @@ GET /api/external/chat/web/feedback?user_id=364593&question_id=20000003596&answe
 | 不传或 `null` | 使用当前活动分支（最新版本） |
 
 ### History 返回的版本信息
+
+History API 返回 `turn_versions` 字段，包含每个 turn 的**所有历史版本**（包括被覆盖的）：
+
 ```json
 {
   "data": {
-    "chat_list": [...],
-    "version_info": {
+    "chat_list": [...],  // 当前版本的对话
+    "turn_versions": {
       "1": {
-        "has_versions": true,
+        "total_versions": 3,
         "versions": [
-          {"version_id": 1, "turn_in_list": 1, "answer_preview": "1+1=2", "children_turns": []},
-          {"version_id": 2, "turn_in_list": 2, "answer_preview": "1+1+1=3", "children_turns": [3]}
+          {
+            "version_id": 1,
+            "is_original": true,
+            "action": "original",
+            "timestamp": "2025-12-23T07:37:27",
+            "user_message": "1+1+1",
+            "assistant_preview": "The sum of 1, 1, and 1 is 3."
+          },
+          {
+            "version_id": 2,
+            "is_original": false,
+            "action": "edit",
+            "user_message": "1+1+1+1",
+            "assistant_preview": "You're adding another '1'..."
+          },
+          {
+            "version_id": 3,
+            "is_original": false,
+            "action": "edit",
+            "user_message": "1+1+1",
+            "assistant_preview": "The sum of 1 + 1 + 1 is 3."
+          }
         ]
       }
     },
+    "version_info": {...},  // 旧格式（兼容）
     "current_version_path": "default"
   }
+}
+```
+
+### 前端版本切换 UI
+
+根据 `turn_versions`，前端可以显示 `< 1/3 >` 这样的版本切换按钮：
+
+```javascript
+// 获取 Turn 1 的版本数
+const turn1Versions = data.turn_versions?.["1"]?.versions || [];
+const totalVersions = turn1Versions.length;  // 3
+const currentVersion = turn1Versions[currentIndex];  // 当前显示的版本
+
+// 渲染版本切换按钮
+<span>< {currentIndex + 1}/{totalVersions} ></span>
+
+// 切换版本时显示对应内容
+function onVersionChange(versionId) {
+  const version = turn1Versions.find(v => v.version_id === versionId);
+  setUserMessage(version.user_message);
+  setAssistantMessage(version.assistant_preview);
 }
 ```
 
