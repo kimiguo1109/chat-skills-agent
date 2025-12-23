@@ -2628,26 +2628,32 @@ async def get_chat_history(
             if not feedback_dir.exists():
                 feedback_dir = Path("/root/usr/skill_agent_demo/backend/feedback")
             
+            # 🆕 定义 feedback_map 在外部，确保后续代码可访问
+            feedback_map = {}
             user_feedback_file = feedback_dir / f"{user_id}_feedback.json"
             if user_feedback_file.exists():
                 try:
                     all_feedback = json.loads(user_feedback_file.read_text(encoding='utf-8'))
-                    feedback_map = {}
+                    # 按 turn + version_id 构建 feedback map
                     for fb in all_feedback:
-                        # 🌳 匹配 session + branch（branch 默认为 main）
-                        fb_branch = fb.get("branch", "main")
-                        if fb.get("session_id") == session_id and fb_branch == active_branch:
-                            feedback_map[fb.get("turn_number")] = {
+                        if fb.get("session_id") == session_id:
+                            turn_num = fb.get("turn_number")
+                            ver_id = fb.get("version_id", 1)
+                            key = f"{turn_num}_{ver_id}"
+                            feedback_map[key] = {
                                 "type": fb.get("feedback_type"),
                                 "reason": fb.get("reason"),
                                 "timestamp": fb.get("timestamp"),
-                                "branch": fb_branch
+                                "version_id": ver_id
                             }
                     
-                    # 更新 chat_list 中的 feedback
+                    # 更新 chat_list 中的 feedback（按 turn + version 匹配）
                     for item in chat_list:
-                        if item["turn"] in feedback_map:
-                            item["feedback"] = feedback_map[item["turn"]]
+                        turn_num = item.get("turn")
+                        ver_id = item.get("version_id", 1) if "version_id" in item else 1
+                        key = f"{turn_num}_{ver_id}"
+                        if key in feedback_map:
+                            item["feedback"] = feedback_map[key]
                 except Exception as fb_err:
                     logger.warning(f"⚠️ Failed to load feedback: {fb_err}")
         
@@ -2775,44 +2781,61 @@ async def get_chat_history(
                     "versions": sorted(versions_list, key=lambda x: x.get("version_id", 0))
                 }
         
-        # 🆕 重构 chat_list：优先从 turn_versions 读取所有版本
-        enhanced_chat_list = []
+        # 🆕 重构 chat_list：返回当前版本路径的对话（每个 turn 只显示一条）
+        # 前端需要版本切换时，使用 turn_versions 获取其他版本
+        current_chat_list = []
         processed_turns = set()
         
-        # 首先处理有版本历史的 turns
+        # 确定每个 turn 显示哪个版本
         for turn_key, version_data in turn_versions.items():
             if version_data["total_versions"] > 0:
                 turn_num = int(turn_key)
                 processed_turns.add(turn_num)
                 
-                # 为每个版本创建一条记录
                 versions = version_data["versions"]
+                # 选择当前版本：优先使用 selected_versions，否则使用最新版本
+                selected_ver = selected_versions.get(turn_num, len(versions))  # 默认最新版本
+                
+                # 找到选中的版本
+                selected_version = None
                 for v in versions:
-                    # 查找原始 item 以获取额外信息
-                    original_item = next((item for item in chat_list if item["turn"] == turn_num), {})
-                    
-                    enhanced_chat_list.append({
-                        "turn": turn_num,
-                        "version_id": v["version_id"],
-                        "total_versions": len(versions),
-                        "timestamp": v.get("timestamp", original_item.get("timestamp", "")),
-                        "user_message": v["user_message"],
-                        "assistant_message": v["assistant_message"],
-                        "referenced_text": original_item.get("referenced_text"),
-                        "files": original_item.get("files"),
-                        "feedback": original_item.get("feedback"),
-                        "can_edit": True,
-                        "can_regenerate": True,
-                        "has_versions": True,
-                        "is_original": v.get("is_original", False),
-                        "action": v.get("action", "original")
-                    })
+                    if v["version_id"] == selected_ver:
+                        selected_version = v
+                        break
+                
+                # 如果没找到，使用最后一个版本
+                if not selected_version:
+                    selected_version = versions[-1]
+                
+                # 查找原始 item 以获取额外信息
+                original_item = next((item for item in chat_list if item["turn"] == turn_num), {})
+                
+                # 🆕 获取该版本的 feedback
+                ver_feedback_key = f"{turn_num}_{selected_version['version_id']}"
+                ver_feedback = feedback_map.get(ver_feedback_key) or original_item.get("feedback")
+                
+                current_chat_list.append({
+                    "turn": turn_num,
+                    "version_id": selected_version["version_id"],
+                    "total_versions": len(versions),
+                    "timestamp": selected_version.get("timestamp", original_item.get("timestamp", "")),
+                    "user_message": selected_version["user_message"],
+                    "assistant_message": selected_version["assistant_message"],
+                    "referenced_text": original_item.get("referenced_text"),
+                    "files": original_item.get("files"),
+                    "feedback": ver_feedback,
+                    "can_edit": True,
+                    "can_regenerate": True,
+                    "has_versions": len(versions) > 1,
+                    "is_original": selected_version.get("is_original", False),
+                    "action": selected_version.get("action", "original")
+                })
         
-        # 然后添加没有版本历史的 turns（排除 regenerate 产生的重复 turn）
+        # 添加没有版本历史的 turns
         for item in filtered_chat_list:
             turn_num = item["turn"]
             if turn_num not in processed_turns:
-                # 检查是否是 regenerate 产生的重复（user_message 与某个有版本的 turn 相同）
+                # 检查是否是 regenerate 产生的重复
                 is_duplicate = False
                 for turn_key, version_data in turn_versions.items():
                     for v in version_data["versions"]:
@@ -2823,11 +2846,63 @@ async def get_chat_history(
                         break
                 
                 if not is_duplicate:
-                    enhanced_chat_list.append(item)
+                    item["version_id"] = 1
+                    item["total_versions"] = 1
+                    current_chat_list.append(item)
         
-        # 🆕 按 turn 顺序排序，确保 Turn 1 在前，Turn 2 在后
-        # 同一 turn 的不同版本按 version_id 排序
-        enhanced_chat_list.sort(key=lambda x: (x.get("turn", 0), x.get("version_id", 0)))
+        # 按 turn 顺序排序
+        current_chat_list.sort(key=lambda x: x.get("turn", 0))
+        
+        # 🆕 构建包含所有版本的完整列表（供前端版本切换使用）
+        all_versions_list = []
+        for turn_key, version_data in turn_versions.items():
+            turn_num = int(turn_key)
+            original_item = next((item for item in chat_list if item["turn"] == turn_num), {})
+            
+            for v in version_data["versions"]:
+                # 🆕 获取该版本的 feedback
+                ver_fb_key = f"{turn_num}_{v['version_id']}"
+                ver_feedback = feedback_map.get(ver_fb_key)
+                
+                all_versions_list.append({
+                    "turn": turn_num,
+                    "version_id": v["version_id"],
+                    "total_versions": version_data["total_versions"],
+                    "timestamp": v.get("timestamp"),
+                    "user_message": v["user_message"],
+                    "assistant_message": v["assistant_message"],
+                    "feedback": ver_feedback,
+                    "is_original": v.get("is_original", False),
+                    "action": v.get("action", "original")
+                })
+        
+        # 添加无版本的 turns
+        for item in filtered_chat_list:
+            turn_num = item["turn"]
+            if str(turn_num) not in turn_versions:
+                is_duplicate = any(
+                    v["user_message"] == item.get("user_message")
+                    for vd in turn_versions.values()
+                    for v in vd["versions"]
+                )
+                if not is_duplicate:
+                    # 获取该 turn 的 feedback
+                    fb_key = f"{turn_num}_1"
+                    fb = feedback_map.get(fb_key) or item.get("feedback")
+                    
+                    all_versions_list.append({
+                        "turn": turn_num,
+                        "version_id": 1,
+                        "total_versions": 1,
+                        "timestamp": item.get("timestamp"),
+                        "user_message": item.get("user_message"),
+                        "assistant_message": item.get("assistant_message"),
+                        "feedback": fb,
+                        "is_original": True,
+                        "action": "original"
+                    })
+        
+        all_versions_list.sort(key=lambda x: (x.get("turn", 0), x.get("version_id", 0)))
         
         return {
             "code": 0,
@@ -2837,19 +2912,17 @@ async def get_chat_history(
                 "answer_id": answer_id,
                 "session_id": session_id,
                 "user_id": user_id,
-                # 🆕 包含所有版本的对话列表（前端直接渲染）
-                "chat_list": enhanced_chat_list,
-                "total": len(enhanced_chat_list),
-                # 🆕 完整的对话列表（原始 MD 解析，供参考）
-                "all_turns": chat_list,
-                "all_turns_total": len(chat_list),
-                # 🆕 版本信息（告诉前端哪些 turn 有多个版本可切换）
-                "version_info": version_info if version_info else None,
-                # 🆕 每个 turn 的所有历史版本（包含 user_message 和 assistant_preview）
+                # 🆕 当前版本路径的对话（每个 turn 一条，前端直接渲染）
+                "chat_list": current_chat_list,
+                "total": len(current_chat_list),
+                # 🆕 包含所有版本的完整列表（供版本切换使用）
+                "all_versions": all_versions_list,
+                "all_versions_total": len(all_versions_list),
+                # 🆕 每个 turn 的版本信息（告诉前端哪些 turn 有多个版本可切换）
                 "turn_versions": turn_versions if turn_versions else None,
                 # 🆕 当前选中的版本路径
                 "current_version_path": version_path or "default",
-                "has_versions": len(version_info) > 0 or len(turn_versions) > 0
+                "has_versions": len(turn_versions) > 0
             }
         }
         
@@ -3645,6 +3718,13 @@ async def submit_feedback(
         return {"code": 400, "msg": "turn_id or turn_number is required", "data": None}
     turn_id = int(turn_id)
     
+    # 🆕 版本 ID（用于区分同一 turn 的不同版本）
+    version_id = body.get("version_id", 1)
+    try:
+        version_id = int(version_id)
+    except:
+        version_id = 1
+    
     # 🌳 分支参数
     branch = body.get("branch", "main")
     
@@ -3691,13 +3771,13 @@ async def submit_feedback(
             except:
                 existing_feedback = []
         
-        # 🌳 查找是否已有该 turn + branch 的反馈
-        feedback_key = f"{session_id}_{branch}_{turn_id}"
+        # 🆕 查找是否已有该 turn + version_id 的反馈
+        feedback_key = f"{session_id}_{turn_id}_v{version_id}"
         found_idx = None
         for i, fb in enumerate(existing_feedback):
-            # 🌳 匹配 session + branch + turn（branch 默认为 main）
-            fb_branch = fb.get("branch", "main")
-            if fb.get("session_id") == session_id and fb_branch == branch and fb.get("turn_number") == turn_id:
+            # 🆕 匹配 session + turn + version_id
+            fb_version = fb.get("version_id", 1)
+            if fb.get("session_id") == session_id and fb.get("turn_number") == turn_id and fb_version == version_id:
                 found_idx = i
                 break
         
@@ -3712,8 +3792,9 @@ async def submit_feedback(
                 "feedback_id": f"fb_{feedback_key}_{datetime.now().strftime('%Y%m%d%H%M%S')}",
                 "user_id": user_id,
                 "session_id": session_id,
-                "branch": branch,  # 🌳 保存分支信息
+                "branch": branch,
                 "turn_number": turn_id,
+                "version_id": version_id,  # 🆕 保存版本 ID
                 "feedback_type": feedback_type,
                 "reason": reason,
                 "detail": detail,
@@ -3741,6 +3822,7 @@ async def submit_feedback(
             "data": {
                 "session_id": session_id,
                 "turn_id": turn_id,
+                "version_id": version_id,  # 🆕 返回版本 ID
                 "branch": branch,
                 "feedback_type": feedback_type,
                 "action": "cancelled" if feedback_type == "cancel" else "saved"

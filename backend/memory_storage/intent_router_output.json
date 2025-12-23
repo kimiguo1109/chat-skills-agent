@@ -1,39 +1,11 @@
 {
   "description": "Intent Router 实时输出记录 (Phase 3 架构)",
-  "latest": {
-    "timestamp": "2025-12-23T09:46:19.804451",
-    "user_message": "mở bài trước tiên là \" Bài thơ 'Miền Trung' của Phan Xuân Luật...",
-    "method": "llm_fallback_gemini",
-    "tokens_used": 134,
-    "results": [
-      {
-        "intent": "explain",
-        "topic": "Bài thơ 'Miền Trung' của Phan Xuân Luật",
-        "confidence": 0.9,
-        "parameters": {}
-      }
-    ]
-  },
-  "history": [
-    {
-      "timestamp": "2025-12-23T09:46:19.804451",
-      "user_message": "mở bài trước tiên là \" Bài thơ 'Miền Trung' của Phan Xuân Luật...",
-      "method": "llm_fallback_gemini",
-      "tokens_used": 134,
-      "results": [
-        {
-          "intent": "explain",
-          "topic": "Bài thơ 'Miền Trung' của Phan Xuân Luật",
-          "confidence": 0.9,
-          "parameters": {}
-        }
-      ]
-    }
-  ],
+  "latest": {},
+  "history": [],
   "stats": {
-    "total_requests": 1,
+    "total_requests": 0,
     "rule_based_success": 0,
-    "llm_fallback": 1,
+    "llm_fallback": 0,
     "rule_success_rate": "0.0%"
   }
 }
