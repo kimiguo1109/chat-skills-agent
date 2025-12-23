@@ -2846,8 +2846,14 @@ async def get_chat_history(
                         break
                 
                 if not is_duplicate:
+                    # 🆕 确保字段格式一致
                     item["version_id"] = 1
                     item["total_versions"] = 1
+                    item["is_original"] = True
+                    item["action"] = "original"
+                    # 获取该 turn 的 feedback
+                    fb_key = f"{turn_num}_1"
+                    item["feedback"] = feedback_map.get(fb_key) or item.get("feedback")
                     current_chat_list.append(item)
         
         # 按 turn 顺序排序
