@@ -1128,7 +1128,7 @@ async def _save_and_replace_turn_for_edit(
             "is_original": False,
             "timestamp": datetime.now().isoformat(),
             "message": new_message,
-            "response_preview": new_response[:200] if len(new_response) > 200 else new_response
+            "response": new_response  # 🆕 保存完整内容
         })
         
         # 写入版本文件
@@ -2371,17 +2371,30 @@ async def get_chat_history(
             # 从 content 字段解析用户消息和助手回复
             content = v.get("content", "")
             user_msg = v.get("message", "")  # Edit 时保存的新消息
-            assistant_preview = v.get("response_preview", "")
+            # 🆕 优先从 response 字段获取完整内容，兼容旧的 response_preview
+            assistant_message = v.get("response") or v.get("response_preview", "")
             
-            # 如果是原始版本，从 content 中解析
+            # 如果是原始版本，从 content 中解析完整内容
             if v.get("is_original") and content:
                 user_match = re.search(r'### 👤 User Query\n(.*?)\n\n### 🤖', content, re.DOTALL)
                 if user_match:
                     user_msg = user_match.group(1).strip()
-                # 从 JSON 块提取助手消息
+                
+                # 🆕 从 JSON 块提取完整助手消息（不截断）
                 json_match = re.search(r'"text":\s*"((?:[^"\\]|\\.)*)"', content)
                 if json_match:
-                    assistant_preview = json_match.group(1)[:200].replace('\\n', '\n')
+                    # 解码 JSON 转义字符
+                    raw_text = json_match.group(1)
+                    try:
+                        assistant_message = json.loads(f'"{raw_text}"')  # 利用 JSON 解析转义
+                    except:
+                        assistant_message = raw_text.replace('\\n', '\n').replace('\\"', '"')
+                
+                # 🆕 备选：从 Response 块解析
+                if not assistant_message:
+                    response_match = re.search(r'\*\*Response\*\*:\s*\n(.*?)(?:\n---|\n<details>|$)', content, re.DOTALL)
+                    if response_match:
+                        assistant_message = response_match.group(1).strip()
             
             turn_versions_map[turn_id].append({
                 "version_id": v.get("version_id"),
@@ -2389,7 +2402,7 @@ async def get_chat_history(
                 "action": v.get("action"),
                 "timestamp": v.get("timestamp"),
                 "user_message": user_msg,
-                "assistant_preview": assistant_preview
+                "assistant_message": assistant_message  # 🔄 完整内容
             })
         
         # 🌳 加载树状版本信息
