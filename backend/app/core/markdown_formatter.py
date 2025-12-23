@@ -419,7 +419,9 @@ class MarkdownFormatter:
             "user_query": turn_data["user_query"],
             "intent": turn_data.get("intent", {}),
             "agent_response": turn_data.get("agent_response", {}),
-            "metadata": turn_data.get("metadata", {})
+            "metadata": turn_data.get("metadata", {}),
+            # 🆕 添加附件信息（包含 referenced_text、files 等）
+            "attachments": turn_data.get("attachments")
         }
         
         json_str = json.dumps(json_data, ensure_ascii=False, indent=2)

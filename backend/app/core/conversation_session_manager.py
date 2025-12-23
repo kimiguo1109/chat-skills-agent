@@ -241,14 +241,74 @@ class ConversationSessionManager:
         🆕 强制使用指定的 session（用于 API 传入的 session_id）
         
         逻辑：
-        1. 如果 session 文件存在，加载并继续
-        2. 如果不存在，创建新的（使用传入的 session_id）
+        1. 如果 session 文件存在，检查 server_start_id
+        2. 如果服务重启了，归档旧 session 并重新创建
+        3. 否则加载并继续
+        4. 如果不存在，创建新的（使用传入的 session_id）
         """
         session_file = self.storage_path / f"{session_id}.md"
         metadata_file = self.storage_path / f"{session_id}_metadata.json"
         
         if session_file.exists():
-            # 加载现有 session
+            # 🆕 检查 server_start_id（服务重启检测）
+            should_archive = False
+            old_server_id = None
+            
+            if metadata_file.exists():
+                try:
+                    import json
+                    with open(metadata_file, 'r', encoding='utf-8') as f:
+                        old_metadata = json.load(f)
+                    old_server_id = old_metadata.get('server_start_id')
+                    
+                    # 🔧 检查服务是否重启
+                    if old_server_id and self._current_server_start_id and old_server_id != self._current_server_start_id:
+                        logger.info(f"🔄 Server restarted (old: {old_server_id[:8]}..., new: {self._current_server_start_id[:8]}...), archiving old session")
+                        should_archive = True
+                except Exception as e:
+                    logger.warning(f"⚠️ Failed to check server_start_id: {e}")
+            
+            if should_archive:
+                # 🆕 归档旧 session
+                archive_timestamp = timestamp.strftime("%Y%m%d_%H%M%S")
+                archive_file = self.storage_path / f"{session_id}_archived_{archive_timestamp}.md"
+                
+                try:
+                    # 移动旧的 MD 文件到归档
+                    import shutil
+                    shutil.move(str(session_file), str(archive_file))
+                    logger.info(f"📦 Archived old session to: {archive_file.name}")
+                except Exception as e:
+                    logger.warning(f"⚠️ Failed to archive old session: {e}")
+                
+                # 创建新的 session（重置 turn_counter）
+                self.current_session_id = session_id
+                self.current_session_file = session_file
+                self.turn_counter = 0
+                
+                # 初始化新的 metadata
+                self.session_metadata = {
+                    "session_id": session_id,
+                    "user_id": self.user_id,
+                    "start_time": timestamp.isoformat(),
+                    "last_updated": timestamp.isoformat(),
+                    "status": "active",
+                    "total_turns": 0,
+                    "inherited_context": {},
+                    "previous_session_id": None,
+                    "topics": [],
+                    "last_topic": None,
+                    "skills_used": {},
+                    "artifacts_generated": [],
+                    "server_start_id": self._current_server_start_id
+                }
+                
+                # 创建新的 MD 文件头
+                await self._write_session_header_with_inheritance({})
+                logger.info(f"📝 Created new session after server restart: {session_id}")
+                return
+            
+            # 正常加载现有 session
             self.current_session_id = session_id
             self.current_session_file = session_file
             
@@ -258,7 +318,18 @@ class ConversationSessionManager:
                     import json
                     with open(metadata_file, 'r', encoding='utf-8') as f:
                         self.session_metadata = json.load(f)
-                    self.turn_counter = self.session_metadata.get('total_turns', 0)
+                    
+                    # 🔧 使用 MD 文件中实际的 turn 数（更可靠）
+                    actual_turns = self._count_turns_from_file(session_file)
+                    metadata_turns = self.session_metadata.get('total_turns', 0)
+                    
+                    # 如果不一致，以 MD 文件为准
+                    if actual_turns != metadata_turns:
+                        logger.warning(f"⚠️ Turn count mismatch: MD={actual_turns}, metadata={metadata_turns}, using MD count")
+                        self.turn_counter = actual_turns
+                        self.session_metadata['total_turns'] = actual_turns
+                    else:
+                        self.turn_counter = metadata_turns
                 except Exception as e:
                     logger.warning(f"⚠️ Failed to load metadata for {session_id}: {e}")
                     self.turn_counter = self._count_turns_from_file(session_file)

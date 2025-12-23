@@ -1,10 +1,10 @@
 {
   "description": "Intent Router 实时输出记录 (Phase 3 架构)",
   "latest": {
-    "timestamp": "2025-12-22T09:56:14.685206",
-    "user_message": "1+1",
+    "timestamp": "2025-12-23T06:09:16.509461",
+    "user_message": "step 2",
     "method": "llm_fallback_gemini",
-    "tokens_used": 108,
+    "tokens_used": 109,
     "results": [
       {
         "intent": "other",
@@ -16,140 +16,10 @@
   },
   "history": [
     {
-      "timestamp": "2025-12-22T09:52:41.590454",
-      "user_message": "Is tge dots mean multiply",
+      "timestamp": "2025-12-23T06:09:16.509461",
+      "user_message": "step 2",
       "method": "llm_fallback_gemini",
-      "tokens_used": 119,
-      "results": [
-        {
-          "intent": "explain",
-          "topic": "dots meaning in math",
-          "confidence": 0.9,
-          "parameters": {}
-        }
-      ]
-    },
-    {
-      "timestamp": "2025-12-22T09:52:42.774511",
-      "user_message": "có thể chuyển thành tiếng việt không",
-      "method": "llm_fallback_gemini",
-      "tokens_used": 117,
-      "results": [
-        {
-          "intent": "other",
-          "topic": null,
-          "confidence": 0.9,
-          "parameters": {}
-        }
-      ]
-    },
-    {
-      "timestamp": "2025-12-22T09:53:03.043927",
-      "user_message": "hello",
-      "method": "skill_registry",
-      "tokens_used": 0,
-      "results": [
-        {
-          "intent": "other",
-          "topic": null,
-          "confidence": 0.95,
-          "parameters": {
-            "topic": null,
-            "is_conversation": true,
-            "has_files": null
-          }
-        }
-      ]
-    },
-    {
-      "timestamp": "2025-12-22T09:53:25.064318",
-      "user_message": "cho tôi cách giải bài này",
-      "method": "llm_fallback_gemini",
-      "tokens_used": 116,
-      "results": [
-        {
-          "intent": "explain",
-          "topic": "bài này",
-          "confidence": 0.9,
-          "parameters": {}
-        }
-      ]
-    },
-    {
-      "timestamp": "2025-12-22T09:54:21.536797",
-      "user_message": "how to know x=1/4?",
-      "method": "llm_fallback_gemini",
-      "tokens_used": 113,
-      "results": [
-        {
-          "intent": "explain",
-          "topic": "x=1/4",
-          "confidence": 0.9,
-          "parameters": {}
-        }
-      ]
-    },
-    {
-      "timestamp": "2025-12-22T09:54:48.979700",
-      "user_message": "No like you wrote 16.a etc",
-      "method": "llm_fallback_gemini",
-      "tokens_used": 114,
-      "results": [
-        {
-          "intent": "other",
-          "topic": null,
-          "confidence": 0.9,
-          "parameters": {}
-        }
-      ]
-    },
-    {
-      "timestamp": "2025-12-22T09:55:10.931794",
-      "user_message": "1+1",
-      "method": "llm_fallback_gemini",
-      "tokens_used": 108,
-      "results": [
-        {
-          "intent": "other",
-          "topic": null,
-          "confidence": 0.85,
-          "parameters": {}
-        }
-      ]
-    },
-    {
-      "timestamp": "2025-12-22T09:56:00.897815",
-      "user_message": "how to get x=1/4?",
-      "method": "llm_fallback_gemini",
-      "tokens_used": 116,
-      "results": [
-        {
-          "intent": "explain",
-          "topic": "equation solving",
-          "confidence": 0.9,
-          "parameters": {}
-        }
-      ]
-    },
-    {
-      "timestamp": "2025-12-22T09:56:05.870211",
-      "user_message": "1+2",
-      "method": "llm_fallback_gemini",
-      "tokens_used": 108,
-      "results": [
-        {
-          "intent": "other",
-          "topic": null,
-          "confidence": 0.9,
-          "parameters": {}
-        }
-      ]
-    },
-    {
-      "timestamp": "2025-12-22T09:56:14.685206",
-      "user_message": "1+1",
-      "method": "llm_fallback_gemini",
-      "tokens_used": 108,
+      "tokens_used": 109,
       "results": [
         {
           "intent": "other",
@@ -161,9 +31,9 @@
     }
   ],
   "stats": {
-    "total_requests": 11,
+    "total_requests": 1,
     "rule_based_success": 0,
-    "llm_fallback": 9,
+    "llm_fallback": 1,
     "rule_success_rate": "0.0%"
   }
 }

@@ -9,15 +9,28 @@ External Web API - Web 专用聊天接口（SSE 流式 + Edit/Regenerate）
 
 Web 端专属功能：
 - SSE 流式输出
-- Edit/Regenerate 支持（保留历史版本）
+- Edit/Regenerate 支持（树状版本管理）
 - Clear Session 支持
 - 并发安全（per-session 锁）
+
+🌳 树状版本结构：
+当 Regenerate Turn N 时：
+1. 原来的 Turn N+1, N+2... 保留（作为原版本 v1 的后续）
+2. 新回答成为 Turn N 的 v2
+3. 后续新对话挂在 v2 分支下
+
+示例：
+        Q1 ─┬─ A1 (v1) ─── Q2 ─── A2 ─── Q3 ─── A3  (branch: main)
+            │
+            └─ A1' (v2) ─── Q4 ─── A4              (branch: v1_regen_1)
 
 端点:
 - POST /api/external/chat/web - 流式聊天（支持所有 Skill）
 - POST /api/external/chat/web/clear - 清除会话
 - GET /api/external/chat/web/versions - 获取历史版本
 - GET /api/external/chat/web/status - 获取会话状态
+- GET /api/external/chat/web/branches - 获取分支列表
+- POST /api/external/chat/web/switch-branch - 切换分支
 """
 import logging
 import asyncio
@@ -26,7 +39,7 @@ import time
 import re
 from datetime import datetime
 from typing import Dict, Any, List, Optional, AsyncGenerator, Literal
-from fastapi import APIRouter, HTTPException, Depends, Header, Query
+from fastapi import APIRouter, HTTPException, Depends, Header, Query, Request
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 from enum import Enum
@@ -68,6 +81,234 @@ async def get_session_lock(session_id: str) -> asyncio.Lock:
         return _session_locks[session_id]
 
 
+# ============= 🌳 树状版本管理 =============
+
+"""
+树状版本数据结构 (存储在 {session_id}_tree.json):
+
+{
+    "session_id": "q123_a456",
+    "active_branch": "main",  # 当前活动分支
+    "branches": {
+        "main": {
+            "created_at": "2025-12-23T10:00:00",
+            "parent_branch": null,
+            "fork_from_turn": null,
+            "turns": [1, 2, 3]  # 该分支包含的 turn IDs
+        },
+        "regen_1_v2": {
+            "created_at": "2025-12-23T10:05:00",
+            "parent_branch": "main",
+            "fork_from_turn": 1,  # 从 turn 1 分叉
+            "turns": [1]  # 初始只有重新生成的 turn 1
+        }
+    },
+    "turns": {
+        "1": {
+            "versions": {
+                "main": {"timestamp": "...", "response": "A1"},
+                "regen_1_v2": {"timestamp": "...", "response": "A1'"}
+            }
+        },
+        "2": {
+            "versions": {
+                "main": {"timestamp": "...", "response": "A2"}
+            }
+        }
+    }
+}
+"""
+
+
+async def _load_version_tree(
+    memory_manager: MemoryManager,
+    user_id: str,
+    session_id: str
+) -> Dict[str, Any]:
+    """加载或创建版本树"""
+    from pathlib import Path
+    
+    artifacts_dir = memory_manager.artifact_storage.base_dir / user_id
+    tree_file = artifacts_dir / f"{session_id}_tree.json"
+    
+    if tree_file.exists():
+        try:
+            return json.loads(tree_file.read_text(encoding='utf-8'))
+        except:
+            pass
+    
+    # 创建默认版本树
+    return {
+        "session_id": session_id,
+        "active_branch": "main",
+        "branches": {
+            "main": {
+                "created_at": datetime.now().isoformat(),
+                "parent_branch": None,
+                "fork_from_turn": None,
+                "turns": []
+            }
+        },
+        "turns": {}
+    }
+
+
+async def _save_version_tree(
+    memory_manager: MemoryManager,
+    user_id: str,
+    session_id: str,
+    tree: Dict[str, Any]
+) -> bool:
+    """保存版本树"""
+    from pathlib import Path
+    
+    try:
+        artifacts_dir = memory_manager.artifact_storage.base_dir / user_id
+        artifacts_dir.mkdir(parents=True, exist_ok=True)
+        tree_file = artifacts_dir / f"{session_id}_tree.json"
+        
+        tree_file.write_text(json.dumps(tree, ensure_ascii=False, indent=2), encoding='utf-8')
+        return True
+    except Exception as e:
+        logger.error(f"❌ Failed to save version tree: {e}")
+        return False
+
+
+async def _create_regenerate_branch(
+    memory_manager: MemoryManager,
+    user_id: str,
+    session_id: str,
+    turn_id: int,
+    user_message: str
+) -> Optional[str]:
+    """
+    🌳 为 regenerate 创建新分支
+    
+    Returns: 新分支名称，或 None 如果失败
+    """
+    tree = await _load_version_tree(memory_manager, user_id, session_id)
+    
+    # 生成新分支名称
+    branch_count = len([b for b in tree["branches"] if b.startswith(f"regen_{turn_id}_")])
+    new_branch = f"regen_{turn_id}_v{branch_count + 2}"  # v2, v3, v4...
+    
+    current_branch = tree["active_branch"]
+    
+    # 创建新分支
+    tree["branches"][new_branch] = {
+        "created_at": datetime.now().isoformat(),
+        "parent_branch": current_branch,
+        "fork_from_turn": turn_id,
+        "turns": []  # 新 turn 会追加到这里
+    }
+    
+    # 复制 fork 点之前的 turns 到新分支（共享引用）
+    if current_branch in tree["branches"]:
+        parent_turns = tree["branches"][current_branch].get("turns", [])
+        # 新分支继承 fork_from_turn 之前的所有 turns
+        tree["branches"][new_branch]["turns"] = [t for t in parent_turns if t < turn_id]
+    
+    # 记录 turn 的版本信息
+    turn_key = str(turn_id)
+    if turn_key not in tree["turns"]:
+        tree["turns"][turn_key] = {"versions": {}}
+    
+    # 保存原版本信息（如果还没保存）
+    if current_branch not in tree["turns"][turn_key]["versions"]:
+        tree["turns"][turn_key]["versions"][current_branch] = {
+            "timestamp": datetime.now().isoformat(),
+            "user_message": user_message,
+            "status": "original"
+        }
+    
+    # 切换到新分支
+    tree["active_branch"] = new_branch
+    
+    # 保存
+    await _save_version_tree(memory_manager, user_id, session_id, tree)
+    
+    logger.info(f"🌳 Created regenerate branch: {new_branch} (forked from {current_branch} at turn {turn_id})")
+    return new_branch
+
+
+async def _add_turn_to_branch(
+    memory_manager: MemoryManager,
+    user_id: str,
+    session_id: str,
+    turn_id: int,
+    user_message: str,
+    response: str
+) -> bool:
+    """将新 turn 添加到当前活动分支"""
+    tree = await _load_version_tree(memory_manager, user_id, session_id)
+    
+    active_branch = tree["active_branch"]
+    
+    # 添加 turn 到分支
+    if active_branch not in tree["branches"]:
+        tree["branches"][active_branch] = {
+            "created_at": datetime.now().isoformat(),
+            "parent_branch": None,
+            "fork_from_turn": None,
+            "turns": []
+        }
+    
+    if turn_id not in tree["branches"][active_branch]["turns"]:
+        tree["branches"][active_branch]["turns"].append(turn_id)
+    
+    # 记录 turn 版本信息
+    turn_key = str(turn_id)
+    if turn_key not in tree["turns"]:
+        tree["turns"][turn_key] = {"versions": {}}
+    
+    tree["turns"][turn_key]["versions"][active_branch] = {
+        "timestamp": datetime.now().isoformat(),
+        "user_message": user_message,
+        "response_preview": response[:100] if response else "",
+        "status": "active"
+    }
+    
+    await _save_version_tree(memory_manager, user_id, session_id, tree)
+    return True
+
+
+async def _get_branch_turns(
+    memory_manager: MemoryManager,
+    user_id: str,
+    session_id: str,
+    branch: Optional[str] = None
+) -> List[int]:
+    """获取指定分支（或当前活动分支）的 turn 列表"""
+    tree = await _load_version_tree(memory_manager, user_id, session_id)
+    
+    branch = branch or tree["active_branch"]
+    
+    if branch in tree["branches"]:
+        return tree["branches"][branch].get("turns", [])
+    
+    return []
+
+
+async def _switch_branch(
+    memory_manager: MemoryManager,
+    user_id: str,
+    session_id: str,
+    branch: str
+) -> bool:
+    """切换到指定分支"""
+    tree = await _load_version_tree(memory_manager, user_id, session_id)
+    
+    if branch not in tree["branches"]:
+        logger.warning(f"⚠️ Branch not found: {branch}")
+        return False
+    
+    tree["active_branch"] = branch
+    await _save_version_tree(memory_manager, user_id, session_id, tree)
+    
+    logger.info(f"🌳 Switched to branch: {branch}")
+    return True
+
+
 # ============= 请求/响应模型 =============
 
 class ActionType(str, Enum):
@@ -91,6 +332,8 @@ class WebChatRequest(BaseModel):
     # Web 专用参数
     action: ActionType = Field(ActionType.SEND, description="操作类型: send/edit/regenerate")
     turn_id: Optional[int] = Field(None, description="Edit/Regenerate 时指定的轮次号")
+    # 🌳 分支管理
+    branch: Optional[str] = Field(None, description="指定分支名称（不传则使用当前活动分支）")
     
     # 通用参数（与 App 端一致）
     file_uri: Optional[str] = Field(None, description="单个 GCS 文件 URI")
@@ -109,6 +352,24 @@ class ClearSessionRequest(BaseModel):
     user_id: str = Field(..., description="用户 ID")
     question_id: str = Field(..., description="题目 ID")
     answer_id: str = Field(..., description="答案 ID")
+
+
+class FeedbackRequest(BaseModel):
+    """反馈请求 - 兼容前端字段名"""
+    user_id: str = Field(..., description="用户 ID")
+    question_id: Optional[str] = Field(None, description="题目 ID")
+    answer_id: Optional[str] = Field(None, description="答案 ID")
+    # 兼容两种字段名
+    turn_id: Optional[int] = Field(None, description="对话轮次")
+    turn_number: Optional[int] = Field(None, description="对话轮次（兼容前端）")
+    # 兼容数字和字符串类型
+    feedback_type: Optional[str] = Field(None, description="反馈类型: like/dislike/cancel 或 1/2/3")
+    # 前端可能传数字
+    feedback_type_num: Optional[int] = Field(None, alias="feedback_type", description="反馈类型数字")
+    reason: Optional[str] = Field(None, description="反馈原因（dislike时可选）")
+    detail: Optional[str] = Field(None, description="反馈详情")
+    # 🆕 从 URL 获取的参数（兼容）
+    session_id: Optional[str] = Field(None, description="会话 ID")
 
 
 # ============= SSE 流式生成 =============
@@ -164,11 +425,25 @@ async def generate_sse_stream(
             )
             
         elif action == ActionType.REGENERATE:
-            if not turn_id:
-                # 🆕 没有 turn_id 时，转换为 send action
-                logger.info(f"⚠️ Regenerate without turn_id, converting to send action")
+            # 🌳 树状版本管理：Regenerate 创建新分支
+            actual_turn_count = await _get_current_turn_count(
+                orchestrator.memory_manager,
+                user_id,
+                session_id
+            )
+            
+            if not turn_id or turn_id < 1:
+                turn_id = actual_turn_count if actual_turn_count > 0 else None
+                logger.info(f"🔄 Regenerate: no turn_id provided, using last turn = {turn_id}")
+            elif turn_id > actual_turn_count:
+                logger.info(f"🔄 Regenerate: turn_id {turn_id} > actual {actual_turn_count}, using last turn")
+                turn_id = actual_turn_count
+            
+            if not turn_id or actual_turn_count == 0:
+                logger.info(f"⚠️ Regenerate: no turns found, converting to send action")
                 action = ActionType.SEND
-            else:
+            
+            if action == ActionType.REGENERATE and turn_id:
                 # 获取原始消息
                 original_message = await _get_turn_message(
                     orchestrator.memory_manager,
@@ -178,20 +453,24 @@ async def generate_sse_stream(
                 )
                 
                 if not original_message:
-                    # 🆕 找不到历史消息时，使用传入的 message 作为新消息（转换为 send）
-                    logger.info(f"⚠️ Turn {turn_id} not found, converting to send action with message: {message[:50]}...")
+                    logger.info(f"⚠️ Turn {turn_id} not found, converting to send action")
                     action = ActionType.SEND
                 else:
                     message = original_message
                     
-                    # 截断并保存版本
-                    await _truncate_and_save_version(
+                    # 🌳 创建新分支（保留原有对话）
+                    new_branch = await _create_regenerate_branch(
                         orchestrator.memory_manager,
                         user_id,
                         session_id,
                         turn_id,
-                        action="regenerate"
+                        message
                     )
+                    
+                    if new_branch:
+                        logger.info(f"🌳 Regenerate turn {turn_id}: created branch '{new_branch}', message: '{message[:50]}...'")
+                    else:
+                        logger.warning(f"⚠️ Failed to create branch, continuing with regenerate")
         
         # 2.5 🆕 处理题目上下文
         # 每次快捷问答都应该基于题目上下文，不仅限于新 session
@@ -208,6 +487,9 @@ async def generate_sse_stream(
                     logger.warning(f"⚠️ Failed to fetch question context for qid={qid}")
             else:
                 logger.warning(f"⚠️ Cannot fetch question context: token is missing (qid={qid})")
+        
+        # 🆕 发送 thinking 状态，让客户端知道正在处理
+        yield f"data: {json.dumps({'type': 'thinking', 'message': 'Processing your request...'})}\n\n"
         
         # 3. 🔥 调用完整的 Skill Pipeline（与 App 端一致）
         result = await execute_skill_pipeline(
@@ -307,30 +589,104 @@ async def generate_sse_stream(
         else:
             text = str(content) if content else ""
         
-        # 流式发送内容（分块）
+        # 流式发送内容（分块）- 优化分块策略
         if text:
-            chunk_size = 50  # 每块字符数
-            for i in range(0, len(text), chunk_size):
-                chunk = text[i:i+chunk_size]
+            # 🆕 智能分块：按句子或段落分割，而不是固定字符数
+            # 优先按换行分割，然后按句子分割
+            chunks = []
+            for para in text.split('\n'):
+                if para.strip():
+                    # 如果段落太长，按句子分割
+                    if len(para) > 150:
+                        # 按句子分割（支持中英文标点）
+                        sentences = re.split(r'(?<=[。！？.!?])\s*', para)
+                        chunks.extend([s for s in sentences if s.strip()])
+                    else:
+                        chunks.append(para)
+                else:
+                    chunks.append('')  # 保留空行
+            
+            # 如果分块后太少，使用固定大小分块
+            if len(chunks) <= 2 and len(text) > 100:
+                chunk_size = 30  # 更小的块，更流畅
+                chunks = [text[i:i+chunk_size] for i in range(0, len(text), chunk_size)]
+            
+            for chunk in chunks:
                 yield f"data: {json.dumps({'type': 'chunk', 'content': chunk})}\n\n"
-                await asyncio.sleep(0.01)  # 模拟流式效果
+                await asyncio.sleep(0.005)  # 更快的发送间隔
         else:
             # 🆕 即使没有文本，也发送一个空 chunk 表示处理完成
             yield f"data: {json.dumps({'type': 'chunk', 'content': '处理完成'})}\n\n"
         
-        # 6. 获取实际轮次
-        actual_turn_id = await _get_current_turn_count(
+        # 6. 获取实际轮次（新追加的 turn）
+        new_turn_id = await _get_current_turn_count(
             orchestrator.memory_manager,
             user_id,
             session_id
         )
         
-        # 7. 发送完成事件
+        # 🌳 7. 树状版本管理：更新版本树
+        actual_turn_id = new_turn_id
+        tree = await _load_version_tree(orchestrator.memory_manager, user_id, session_id)
+        active_branch = tree.get("active_branch", "main")
+        
+        if action == ActionType.REGENERATE and turn_id:
+            # Regenerate：新响应已追加为新 turn，记录到版本树
+            try:
+                await _add_turn_to_branch(
+                    orchestrator.memory_manager,
+                    user_id,
+                    session_id,
+                    turn_id,  # 使用原始 turn_id（在新分支上覆盖）
+                    message,
+                    text
+                )
+                actual_turn_id = turn_id  # 返回 regenerate 的 turn ID
+                logger.info(f"🌳 Regenerate complete: turn {turn_id} on branch '{active_branch}'")
+            except Exception as regen_err:
+                logger.error(f"❌ Regenerate post-processing failed: {regen_err}")
+        else:
+            # 普通 send：记录新 turn 到版本树
+            try:
+                await _add_turn_to_branch(
+                    orchestrator.memory_manager,
+                    user_id,
+                    session_id,
+                    new_turn_id,
+                    message,
+                    text
+                )
+            except Exception as tree_err:
+                logger.warning(f"⚠️ Failed to update version tree: {tree_err}")
+        
+        # 8. 发送完成事件
         elapsed_time = time.time() - start_time
         token_usage = result.get("token_usage", {})
         context_stats = result.get("context_stats", {})
         
-        yield f"data: {json.dumps({'type': 'done', 'turn_id': actual_turn_id, 'intent': intent, 'content_type': content_type, 'topic': topic, 'full_response': text, 'elapsed_time': round(elapsed_time, 2), 'token_usage': token_usage, 'context_stats': context_stats, 'action': action.value})}\n\n"
+        # 🌳 构建 done 事件数据，包含分支信息
+        done_data = {
+            'type': 'done',
+            'turn_id': actual_turn_id,
+            'intent': intent,
+            'content_type': content_type,
+            'topic': topic,
+            'full_response': text,
+            'elapsed_time': round(elapsed_time, 2),
+            'token_usage': token_usage,
+            'context_stats': context_stats,
+            'action': action.value,
+            'branch': active_branch  # 🌳 当前活动分支
+        }
+        
+        # 如果是 regenerate，标记新分支创建
+        if action == ActionType.REGENERATE:
+            done_data['branch_created'] = True
+        
+        yield f"data: {json.dumps(done_data)}\n\n"
+        
+        # 🆕 发送标准 SSE 终止信号
+        yield "data: [DONE]\n\n"
         
     except Exception as e:
         logger.error(f"❌ SSE generation error: {e}", exc_info=True)
@@ -407,11 +763,301 @@ async def _truncate_and_save_version(
         # 截断 MD 文件
         md_file.write_text(header_content, encoding='utf-8')
         
+        # 🆕 同步更新 metadata 文件的 turn_count
+        metadata_file = artifacts_dir / f"{session_id}_metadata.json"
+        if metadata_file.exists():
+            try:
+                metadata = json.loads(metadata_file.read_text(encoding='utf-8'))
+                # 更新 turn_count 为截断后的数量（turn_id - 1，因为我们截断了从 turn_id 开始的所有内容）
+                metadata["turn_count"] = turn_id - 1
+                metadata["last_updated"] = datetime.now().isoformat()
+                metadata_file.write_text(json.dumps(metadata, ensure_ascii=False, indent=2), encoding='utf-8')
+                logger.info(f"📝 Updated metadata: turn_count -> {turn_id - 1}")
+            except Exception as meta_err:
+                logger.warning(f"⚠️ Failed to update metadata: {meta_err}")
+        
         logger.info(f"✅ Truncated session at turn {turn_id}, saved version {len(versions)}")
         return True
         
     except Exception as e:
         logger.error(f"❌ Failed to truncate and save version: {e}")
+        return False
+
+
+async def _save_version_for_regenerate(
+    memory_manager: MemoryManager,
+    user_id: str,
+    session_id: str,
+    turn_id: int
+) -> Optional[str]:
+    """
+    🆕 为 regenerate 保存旧版本（不修改原始文件！）
+    
+    Regenerate 的正确行为：
+    1. 保存旧版本到 versions.json（作为历史记录）
+    2. 返回用户消息（用于重新生成）
+    3. 【重要】不删除/不修改原始 MD 文件！
+       新的回答会由后续流程**原地替换**该 turn 的 assistant response
+    """
+    from pathlib import Path
+    
+    try:
+        artifacts_dir = memory_manager.artifact_storage.base_dir / user_id
+        md_file = artifacts_dir / f"{session_id}.md"
+        versions_file = artifacts_dir / f"{session_id}_versions.json"
+        
+        if not md_file.exists():
+            logger.warning(f"⚠️ MD file not found: {md_file}")
+            return None
+        
+        content = md_file.read_text(encoding='utf-8')
+        
+        # 解析 turns
+        turn_pattern = r'## Turn (\d+) - (\d{2}:\d{2}:\d{2})'
+        turns = list(re.finditer(turn_pattern, content))
+        
+        if not turns:
+            return None
+        
+        # 找到目标 turn
+        target_idx = None
+        for i, match in enumerate(turns):
+            if int(match.group(1)) == turn_id:
+                target_idx = i
+                break
+        
+        if target_idx is None:
+            logger.warning(f"⚠️ Turn {turn_id} not found for regenerate")
+            return None
+        
+        # 获取该 turn 的内容
+        target_start = turns[target_idx].start()
+        if target_idx + 1 < len(turns):
+            target_end = turns[target_idx + 1].start()
+        else:
+            target_end = len(content)
+        
+        turn_content = content[target_start:target_end]
+        
+        # 提取用户消息
+        user_match = re.search(r'### 👤 User Query\n(.*?)\n\n### 🤖', turn_content, re.DOTALL)
+        user_message = user_match.group(1).strip() if user_match else None
+        
+        if not user_message:
+            logger.warning(f"⚠️ Could not extract user message from turn {turn_id}")
+            return None
+        
+        # 保存版本（只作为历史记录，不修改原始文件）
+        versions = []
+        if versions_file.exists():
+            try:
+                versions = json.loads(versions_file.read_text(encoding='utf-8'))
+            except:
+                versions = []
+        
+        versions.append({
+            "version_id": len(versions) + 1,
+            "action": "regenerate",
+            "turn_id": turn_id,
+            "timestamp": datetime.now().isoformat(),
+            "old_content": turn_content,  # 保存旧版本
+            "user_message": user_message
+        })
+        
+        versions_file.write_text(json.dumps(versions, ensure_ascii=False, indent=2), encoding='utf-8')
+        
+        logger.info(f"✅ Saved version {len(versions)} for turn {turn_id} regenerate, user_message: '{user_message[:50]}...'")
+        return user_message
+        
+    except Exception as e:
+        logger.error(f"❌ Failed to save version for regenerate: {e}")
+        return None
+
+
+async def _replace_turn_response(
+    memory_manager: MemoryManager,
+    user_id: str,
+    session_id: str,
+    turn_id: int,
+    new_response: str,
+    intent: str = "other",
+    topic: str = ""
+) -> bool:
+    """
+    🆕 原地替换指定 turn 的 assistant response（用于 regenerate）
+    
+    这个函数会：
+    - 找到指定 turn 的 assistant response 部分
+    - 用新的 response 替换它
+    - 保留所有其他 turns 不变
+    """
+    from pathlib import Path
+    
+    try:
+        artifacts_dir = memory_manager.artifact_storage.base_dir / user_id
+        md_file = artifacts_dir / f"{session_id}.md"
+        
+        if not md_file.exists():
+            logger.warning(f"⚠️ MD file not found: {md_file}")
+            return False
+        
+        content = md_file.read_text(encoding='utf-8')
+        
+        # 解析 turns
+        turn_pattern = r'## Turn (\d+) - (\d{2}:\d{2}:\d{2})'
+        turns = list(re.finditer(turn_pattern, content))
+        
+        if not turns:
+            return False
+        
+        # 找到目标 turn
+        target_idx = None
+        target_match = None
+        for i, match in enumerate(turns):
+            if int(match.group(1)) == turn_id:
+                target_idx = i
+                target_match = match
+                break
+        
+        if target_idx is None:
+            logger.warning(f"⚠️ Turn {turn_id} not found for replacement")
+            return False
+        
+        # 获取该 turn 的范围
+        target_start = turns[target_idx].start()
+        if target_idx + 1 < len(turns):
+            target_end = turns[target_idx + 1].start()
+        else:
+            target_end = len(content)
+        
+        turn_content = content[target_start:target_end]
+        
+        # 提取用户消息
+        user_match = re.search(r'### 👤 User Query\n(.*?)\n\n### 🤖', turn_content, re.DOTALL)
+        user_message = user_match.group(1).strip() if user_match else "Unknown"
+        
+        # 构建新的 turn 内容
+        timestamp = target_match.group(2)  # 保留原始时间戳
+        new_timestamp = datetime.now().strftime("%H:%M:%S")  # 或使用新时间戳
+        
+        # 构建新的 JSON response
+        new_json_data = {
+            "turn_number": turn_id,
+            "timestamp": datetime.now().isoformat(),
+            "user_query": user_message,
+            "intent": {
+                "intent": intent,
+                "topic": topic,
+                "raw_text": user_message
+            },
+            "agent_response": {
+                "skill": "chat",
+                "artifact_id": "",
+                "content": {
+                    "text": new_response
+                }
+            },
+            "metadata": {
+                "model": "gemini-2.5-flash",
+                "source": "/api/external/chat",
+                "regenerated": True
+            },
+            "attachments": None
+        }
+        
+        new_turn_content = f"""## Turn {turn_id} - {new_timestamp}
+
+### 👤 User Query
+{user_message}
+
+### 🤖 Agent Response
+**Type**: text | **Topic**: {topic or 'N/A'} | **Skill**: chat
+
+```json
+{{
+  "text": {json.dumps(new_response, ensure_ascii=False)}
+}}
+```
+
+
+<details>
+<summary>📦 <b>结构化数据（JSON）</b> - 点击展开</summary>
+
+```json
+{json.dumps(new_json_data, ensure_ascii=False, indent=2)}
+```
+
+</details>
+
+---
+
+"""
+        
+        # 替换
+        new_content = content[:target_start] + new_turn_content + content[target_end:]
+        md_file.write_text(new_content, encoding='utf-8')
+        
+        logger.info(f"✅ Replaced turn {turn_id} response with new content ({len(new_response)} chars)")
+        return True
+        
+    except Exception as e:
+        logger.error(f"❌ Failed to replace turn response: {e}")
+        return False
+
+
+async def _delete_last_turn(
+    memory_manager: MemoryManager,
+    user_id: str,
+    session_id: str
+) -> bool:
+    """
+    🆕 删除最后一个 turn（用于 regenerate 后清理重复 turn）
+    """
+    from pathlib import Path
+    
+    try:
+        artifacts_dir = memory_manager.artifact_storage.base_dir / user_id
+        md_file = artifacts_dir / f"{session_id}.md"
+        
+        if not md_file.exists():
+            return False
+        
+        content = md_file.read_text(encoding='utf-8')
+        
+        # 解析 turns
+        turn_pattern = r'## Turn (\d+) - (\d{2}:\d{2}:\d{2})'
+        turns = list(re.finditer(turn_pattern, content))
+        
+        if len(turns) < 2:
+            # 只有一个或没有 turn，不能删除
+            logger.warning(f"⚠️ Cannot delete last turn: only {len(turns)} turns exist")
+            return False
+        
+        # 获取最后一个 turn 的范围
+        last_turn = turns[-1]
+        last_turn_start = last_turn.start()
+        
+        # 删除最后一个 turn
+        new_content = content[:last_turn_start].rstrip() + "\n"
+        md_file.write_text(new_content, encoding='utf-8')
+        
+        # 更新 metadata
+        metadata_file = artifacts_dir / f"{session_id}_metadata.json"
+        if metadata_file.exists():
+            try:
+                metadata = json.loads(metadata_file.read_text(encoding='utf-8'))
+                if "turn_count" in metadata:
+                    metadata["turn_count"] = max(0, metadata["turn_count"] - 1)
+                metadata["last_updated"] = datetime.now().isoformat()
+                metadata_file.write_text(json.dumps(metadata, ensure_ascii=False, indent=2), encoding='utf-8')
+            except Exception as meta_err:
+                logger.warning(f"⚠️ Failed to update metadata after delete: {meta_err}")
+        
+        logger.info(f"🗑️ Deleted last turn (turn {int(last_turn.group(1))})")
+        return True
+        
+    except Exception as e:
+        logger.error(f"❌ Failed to delete last turn: {e}")
         return False
 
 
@@ -611,6 +1257,9 @@ async def web_chat_stream(
         logger.info(f"   • User: {request.user_id}")
         logger.info(f"   • Session: {session_id}")
         logger.info(f"   • Action: {request.action}")
+        logger.info(f"   • Action Type: {request.action_type or 'N/A'}")  # 🆕 记录 action_type
+        logger.info(f"   • Turn ID: {request.turn_id}")  # 🆕 记录 turn_id (edit/regenerate 时重要)
+        logger.info(f"   • Message: {request.message[:50] if request.message else 'N/A'}...")
         logger.info(f"   • QID/Resource ID: {effective_qid_for_context or 'N/A'}")
         logger.info("="*60)
         
@@ -638,6 +1287,10 @@ async def web_chat_stream(
         
         # 🆕 同步 App 端逻辑：处理消息
         message = request.message.strip() if request.message else ""
+        
+        # 🆕 警告：没有消息也没有 action_type
+        if not message and not request.action_type and not has_files:
+            logger.warning(f"⚠️ [Web] No message, action_type, or files provided! This may cause unexpected behavior.")
         
         # 场景 A: 快捷按钮模式（action_type）- 不需要输入文字
         if not message and request.action_type:
@@ -751,10 +1404,11 @@ async def clear_session(
     """
     🗑️ 清除当前题目的会话
     
-    会将当前会话归档，并为用户创建新的空白会话。
+    会删除本地和 S3 上的会话文件，真正清空会话。
     """
     from pathlib import Path
-    import shutil
+    import boto3
+    from botocore.exceptions import ClientError
     
     session_id = f"q{request.question_id}_a{request.answer_id}"
     
@@ -764,34 +1418,78 @@ async def clear_session(
         try:
             artifacts_dir = orchestrator.memory_manager.artifact_storage.base_dir / request.user_id
             md_file = artifacts_dir / f"{session_id}.md"
+            metadata_file = artifacts_dir / f"{session_id}_metadata.json"
             versions_file = artifacts_dir / f"{session_id}_versions.json"
             
             previous_turns = 0
+            deleted_files = []
             
+            # 1. 删除本地 MD 文件
             if md_file.exists():
                 content = md_file.read_text(encoding='utf-8')
                 turn_pattern = r'## Turn (\d+)'
                 matches = re.findall(turn_pattern, content)
                 previous_turns = len(matches)
                 
-                # 归档旧文件
-                archive_name = f"{session_id}_archived_{datetime.now().strftime('%Y%m%d_%H%M%S')}.md"
-                archive_file = artifacts_dir / archive_name
-                shutil.move(str(md_file), str(archive_file))
-                logger.info(f"📦 Archived session to: {archive_file}")
+                md_file.unlink()
+                deleted_files.append(str(md_file))
+                logger.info(f"🗑️ Deleted local MD: {md_file}")
+            
+            # 2. 删除本地 metadata 文件
+            if metadata_file.exists():
+                metadata_file.unlink()
+                deleted_files.append(str(metadata_file))
+                logger.info(f"🗑️ Deleted local metadata: {metadata_file}")
+            
+            # 3. 删除本地 versions 文件
+            if versions_file.exists():
+                versions_file.unlink()
+                deleted_files.append(str(versions_file))
+                logger.info(f"🗑️ Deleted local versions: {versions_file}")
+            
+            # 4. 删除 S3 文件
+            s3_deleted = []
+            try:
+                s3_client = boto3.client('s3')
+                bucket_name = "skill-agent-demo"
+                s3_prefix = f"{request.user_id}/{session_id}"
                 
-                # 归档版本文件
-                if versions_file.exists():
-                    archive_versions = artifacts_dir / f"{session_id}_archived_{datetime.now().strftime('%Y%m%d_%H%M%S')}_versions.json"
-                    shutil.move(str(versions_file), str(archive_versions))
+                # 列出并删除所有相关 S3 对象
+                s3_keys = [
+                    f"{request.user_id}/{session_id}.md",
+                    f"{request.user_id}/{session_id}_metadata.json",
+                ]
+                
+                for s3_key in s3_keys:
+                    try:
+                        s3_client.delete_object(Bucket=bucket_name, Key=s3_key)
+                        s3_deleted.append(s3_key)
+                        logger.info(f"☁️ Deleted S3 object: s3://{bucket_name}/{s3_key}")
+                    except ClientError as e:
+                        if e.response['Error']['Code'] != 'NoSuchKey':
+                            logger.warning(f"⚠️ Failed to delete S3 object {s3_key}: {e}")
+                            
+            except Exception as s3_err:
+                logger.warning(f"⚠️ S3 cleanup failed (non-critical): {s3_err}")
+            
+            # 5. 清除内存中的 session 缓存（如果有）
+            try:
+                session_mgr = orchestrator.memory_manager.conversation_session_manager
+                if hasattr(session_mgr, '_sessions') and session_id in session_mgr._sessions:
+                    del session_mgr._sessions[session_id]
+                    logger.info(f"🧹 Cleared session cache: {session_id}")
+            except Exception as cache_err:
+                logger.warning(f"⚠️ Cache cleanup failed (non-critical): {cache_err}")
             
             return {
                 "code": 0,
                 "msg": "Session cleared successfully",
                 "data": {
                     "session_id": session_id,
+                    "user_id": request.user_id,
                     "previous_turns": previous_turns,
-                    "archived": True,
+                    "deleted_local": len(deleted_files),
+                    "deleted_s3": len(s3_deleted),
                     "new_session_ready": True
                 }
             }
@@ -1068,12 +1766,26 @@ async def get_user_sessions(
 async def get_chat_history(
     question_id: str = Query(..., alias="aiQuestionId", description="题目 ID"),
     answer_id: str = Query(..., alias="answerId", description="答案 ID"),
+    version_path: Optional[str] = Query(None, description="🌳 版本路径，格式: 'turn_id:version_id,turn_id:version_id'，如 '1:2' 表示选中 Turn 1 的 version 2"),
     orchestrator: SkillOrchestrator = Depends(get_skill_orchestrator)
 ):
     """
-    📜 获取单个会话的聊天历史
+    📜 获取单个会话的聊天历史（支持树状版本结构）
     
-    与 App 端 /api/external/chat/history 功能一致，提供 Web 端路径。
+    🌳 树状版本概念：
+    - 每个 turn 可以有多个版本（通过 regenerate/edit 产生）
+    - 每个版本可以有自己的后续对话（子树）
+    - 切换版本时，显示该版本及其子树的完整对话链
+    
+    参数：
+    - version_path: 指定要查看的版本路径
+      - 不传: 返回默认路径（每个 turn 使用最新版本）
+      - '1:1': Turn 1 使用 version 1（原始版本）
+      - '1:2': Turn 1 使用 version 2（regenerate 后的版本）
+    
+    返回：
+    - chat_list: 当前选中路径的扁平化对话列表（兼容旧前端）
+    - chat_tree: 完整的树状结构（新前端可用于版本切换）
     """
     from pathlib import Path
     import re
@@ -1229,13 +1941,23 @@ async def get_chat_history(
                     if response_match:
                         assistant_message = response_match.group(1)[:500].replace('\n', ' ')
                 
-                # 提取 referenced_text
+                # 提取 referenced_text（支持两种格式）
                 referenced_text = None
-                ref_match = re.search(r'"referenced_text":\s*"([^"]*)"', turn_text)
-                if ref_match and ref_match.group(1):
-                    referenced_text = ref_match.group(1)
+                # 🆕 方法1：从 attachments.referenced_text 提取（新格式）
+                attachments_match = re.search(r'"attachments":\s*\{[^}]*"referenced_text":\s*"((?:[^"\\]|\\.)*)"', turn_text)
+                if attachments_match and attachments_match.group(1):
+                    referenced_text = attachments_match.group(1)
+                    # 处理转义字符
+                    referenced_text = referenced_text.replace('\\n', '\n').replace('\\r', '\r').replace('\\"', '"')
                 
-                # 提取 feedback
+                # 方法2：直接从顶层 referenced_text 提取（旧格式兼容）
+                if not referenced_text:
+                    ref_match = re.search(r'"referenced_text":\s*"((?:[^"\\]|\\.)*)"', turn_text)
+                    if ref_match and ref_match.group(1):
+                        referenced_text = ref_match.group(1)
+                        referenced_text = referenced_text.replace('\\n', '\n').replace('\\r', '\r').replace('\\"', '"')
+                
+                # 提取 feedback（从 MD 中的 JSON）
                 feedback = None
                 feedback_match = re.search(r'"feedback":\s*(\{[^}]+\}|null)', turn_text)
                 if feedback_match and feedback_match.group(1) != "null":
@@ -1251,12 +1973,213 @@ async def get_chat_history(
                     "assistant_message": assistant_message,
                     "referenced_text": referenced_text,
                     "files": None,
-                    "feedback": feedback
+                    "feedback": feedback,
+                    # 🆕 支持编辑和重新生成
+                    "can_edit": True,
+                    "can_regenerate": True,
+                    "has_versions": False  # 稍后从版本文件更新
                 })
                 
             except Exception as e:
                 logger.warning(f"⚠️ Failed to parse turn: {e}")
                 continue
+        
+        # 🆕 加载版本信息（旧格式兼容）
+        versions_file = md_file.parent / f"{session_id}_versions.json"
+        version_turns = set()
+        if versions_file.exists():
+            try:
+                versions = json.loads(versions_file.read_text(encoding='utf-8'))
+                for v in versions:
+                    version_turns.add(v.get("turn_id"))
+            except:
+                pass
+        
+        # 🌳 加载树状版本信息
+        tree_file = md_file.parent / f"{session_id}_tree.json"
+        tree_info = None
+        active_branch = "main"
+        branches = []
+        branch_switched = False
+        
+        if tree_file.exists():
+            try:
+                tree = json.loads(tree_file.read_text(encoding='utf-8'))
+                # 🆕 不再使用 branch 切换，改用 version_path 选择版本
+                logger.info(f"📜 Loaded tree with {len(tree.get('branches', {}))} branches")
+                
+                # 构建分支信息列表
+                for branch_name, branch_data in tree.get("branches", {}).items():
+                    branches.append({
+                        "name": branch_name,
+                        "is_active": branch_name == active_branch,
+                        "created_at": branch_data.get("created_at"),
+                        "fork_from_turn": branch_data.get("fork_from_turn"),
+                        "parent_branch": branch_data.get("parent_branch"),
+                        "turn_count": len(branch_data.get("turns", []))
+                    })
+                
+                # 检查哪些 turns 有多个版本
+                for turn_key, turn_data in tree.get("turns", {}).items():
+                    turn_num = int(turn_key)
+                    versions_count = len(turn_data.get("versions", {}))
+                    if versions_count > 1:
+                        version_turns.add(turn_num)
+                
+                tree_info = {
+                    "active_branch": active_branch,
+                    "total_branches": len(tree.get("branches", {})),
+                    "branches": branches,
+                    "branch_switched": branch_switched
+                }
+            except Exception as tree_err:
+                logger.warning(f"⚠️ Failed to load version tree: {tree_err}")
+        
+        # 🌳 加载反馈状态（根据分支过滤）
+        if user_id:
+            feedback_dir = Path("feedback")
+            if not feedback_dir.exists():
+                feedback_dir = Path("backend/feedback")
+            if not feedback_dir.exists():
+                feedback_dir = Path("/root/usr/skill_agent_demo/backend/feedback")
+            
+            user_feedback_file = feedback_dir / f"{user_id}_feedback.json"
+            if user_feedback_file.exists():
+                try:
+                    all_feedback = json.loads(user_feedback_file.read_text(encoding='utf-8'))
+                    feedback_map = {}
+                    for fb in all_feedback:
+                        # 🌳 匹配 session + branch（branch 默认为 main）
+                        fb_branch = fb.get("branch", "main")
+                        if fb.get("session_id") == session_id and fb_branch == active_branch:
+                            feedback_map[fb.get("turn_number")] = {
+                                "type": fb.get("feedback_type"),
+                                "reason": fb.get("reason"),
+                                "timestamp": fb.get("timestamp"),
+                                "branch": fb_branch
+                            }
+                    
+                    # 更新 chat_list 中的 feedback
+                    for item in chat_list:
+                        if item["turn"] in feedback_map:
+                            item["feedback"] = feedback_map[item["turn"]]
+                except Exception as fb_err:
+                    logger.warning(f"⚠️ Failed to load feedback: {fb_err}")
+        
+        # 更新 has_versions 标记
+        for item in chat_list:
+            if item["turn"] in version_turns:
+                item["has_versions"] = True
+        
+        # 🌳 构建树状版本结构
+        # 分析哪些 turns 是同一个问题的不同版本（通过 user_message 匹配）
+        version_groups = {}  # {user_message: [turn_indices]}
+        for i, item in enumerate(chat_list):
+            msg = item["user_message"]
+            if msg not in version_groups:
+                version_groups[msg] = []
+            version_groups[msg].append(i)
+        
+        # 构建 version_info：标记每个 turn 的版本关系
+        version_info = {}
+        for msg, indices in version_groups.items():
+            if len(indices) > 1:
+                # 这个问题有多个版本
+                first_turn = chat_list[indices[0]]["turn"]
+                version_info[first_turn] = {
+                    "has_versions": True,
+                    "versions": []
+                }
+                for idx, list_idx in enumerate(indices):
+                    turn_data = chat_list[list_idx]
+                    # 找出这个版本之后、下一个版本之前的所有 turns（子对话）
+                    next_version_turn = chat_list[indices[idx + 1]]["turn"] if idx + 1 < len(indices) else None
+                    children_turns = []
+                    for j in range(list_idx + 1, len(chat_list)):
+                        child_turn = chat_list[j]["turn"]
+                        if next_version_turn and child_turn >= next_version_turn:
+                            break
+                        if chat_list[j]["user_message"] != msg:  # 不是同一问题的另一个版本
+                            children_turns.append(child_turn)
+                    
+                    version_info[first_turn]["versions"].append({
+                        "version_id": idx + 1,
+                        "turn_in_list": turn_data["turn"],  # 在 chat_list 中的实际 turn 号
+                        "timestamp": turn_data["timestamp"],
+                        "answer_preview": turn_data["assistant_message"][:100] + "..." if len(turn_data["assistant_message"]) > 100 else turn_data["assistant_message"],
+                        "children_turns": children_turns
+                    })
+        
+        # 🌳 根据 version_path 参数确定当前选中的版本
+        # 解析 version_path: "1:2" 表示 Turn 1 选择 version 2
+        selected_versions = {}  # {turn_id: version_id}
+        if version_path:
+            try:
+                for part in version_path.split(","):
+                    if ":" in part:
+                        turn_id, ver_id = part.split(":")
+                        selected_versions[int(turn_id)] = int(ver_id)
+            except:
+                pass
+        
+        # 🆕 收集所有版本的 children_turns（用于排除）
+        all_children_turns = set()
+        for vi in version_info.values():
+            for v in vi["versions"]:
+                all_children_turns.update(v["children_turns"])
+        
+        # 计算应该显示的 turns（基于选中的版本路径）
+        display_turns = []
+        processed_questions = set()
+        
+        for item in chat_list:
+            turn_num = item["turn"]
+            msg = item["user_message"]
+            
+            # 🆕 如果这个 turn 是某个版本的子对话，跳过（稍后由版本选择决定）
+            if turn_num in all_children_turns:
+                continue
+            
+            # 检查这个问题是否有多个版本
+            if msg in processed_questions:
+                continue  # 已处理过这个问题的版本
+            
+            first_turn_with_versions = None
+            for ft, vi in version_info.items():
+                if vi["versions"] and any(v["turn_in_list"] == turn_num for v in vi["versions"]):
+                    first_turn_with_versions = ft
+                    break
+            
+            if first_turn_with_versions and first_turn_with_versions in version_info:
+                # 这个问题有多个版本
+                vi = version_info[first_turn_with_versions]
+                selected_ver = selected_versions.get(first_turn_with_versions, len(vi["versions"]))  # 默认最新版本
+                
+                # 找到选中版本
+                for v in vi["versions"]:
+                    if v["version_id"] == selected_ver:
+                        display_turns.append(v["turn_in_list"])
+                        display_turns.extend(v["children_turns"])
+                        processed_questions.add(msg)
+                        break
+            else:
+                # 没有版本的普通 turn
+                display_turns.append(turn_num)
+        
+        # 过滤 chat_list，只保留 display_turns
+        filtered_chat_list = [item for item in chat_list if item["turn"] in display_turns]
+        
+        # 为每个 turn 添加版本信息
+        for item in filtered_chat_list:
+            turn_num = item["turn"]
+            # 检查是否是某个版本组的一部分
+            for ft, vi in version_info.items():
+                for v in vi["versions"]:
+                    if v["turn_in_list"] == turn_num:
+                        item["version_id"] = v["version_id"]
+                        item["total_versions"] = len(vi["versions"])
+                        item["original_turn"] = ft
+                        break
         
         return {
             "code": 0,
@@ -1266,8 +2189,17 @@ async def get_chat_history(
                 "answer_id": answer_id,
                 "session_id": session_id,
                 "user_id": user_id,
-                "chat_list": chat_list,
-                "total": len(chat_list)
+                # 🆕 当前选中版本路径的对话列表（前端直接渲染）
+                "chat_list": filtered_chat_list,
+                "total": len(filtered_chat_list),
+                # 🆕 完整的对话列表（包含所有版本，供高级用途）
+                "all_turns": chat_list,
+                "all_turns_total": len(chat_list),
+                # 🆕 版本信息（告诉前端哪些 turn 有多个版本可切换）
+                "version_info": version_info if version_info else None,
+                # 🆕 当前选中的版本路径
+                "current_version_path": version_path or "default",
+                "has_versions": len(version_info) > 0
             }
         }
         
@@ -2027,5 +2959,214 @@ async def studyx_get_chat_list(
             "msg": str(e),
             "eventId": None,
             "source": None,
+            "data": None
+        }
+
+
+# ============= 🆕 Feedback 接口 =============
+
+@router.post("/feedback")
+async def submit_feedback(
+    request: Request,
+    orchestrator: SkillOrchestrator = Depends(get_skill_orchestrator)
+):
+    """
+    📝 提交反馈（点赞/踩）
+    
+    前端字段兼容:
+    - turn_id 或 turn_number: 对话轮次
+    - feedback_type: 1=like, 2=dislike, "like", "dislike", "cancel"
+    - question_id, answer_id: 可选（从 session_id 推断）
+    - branch: 🌳 分支名称（可选，用于标识反馈属于哪个分支）
+    """
+    from pathlib import Path
+    
+    # 🆕 手动解析请求体，兼容各种字段名
+    body = await request.json()
+    logger.info(f"📥 Feedback request body: {body}")
+    
+    user_id = body.get("user_id")
+    if not user_id:
+        return {"code": 400, "msg": "user_id is required", "data": None}
+    
+    # 兼容 turn_id 和 turn_number
+    turn_id = body.get("turn_id") or body.get("turn_number")
+    if not turn_id:
+        return {"code": 400, "msg": "turn_id or turn_number is required", "data": None}
+    turn_id = int(turn_id)
+    
+    # 🌳 分支参数
+    branch = body.get("branch", "main")
+    
+    # 兼容 feedback_type 数字和字符串
+    raw_feedback = body.get("feedback_type")
+    if isinstance(raw_feedback, int):
+        # 数字转字符串: 1=like, 2=dislike, 0=cancel
+        feedback_type_map = {1: "like", 2: "dislike", 0: "cancel", -1: "cancel"}
+        feedback_type = feedback_type_map.get(raw_feedback, "like")
+    else:
+        feedback_type = str(raw_feedback) if raw_feedback else "like"
+    
+    # 兼容 question_id/answer_id 缺失的情况
+    question_id = body.get("question_id") or body.get("aiQuestionId")
+    answer_id = body.get("answer_id") or body.get("answerId")
+    session_id = body.get("session_id")
+    
+    # 如果没有 session_id，从 question_id 和 answer_id 构造
+    if not session_id:
+        if question_id and answer_id:
+            session_id = f"q{question_id}_a{answer_id}"
+        else:
+            return {"code": 400, "msg": "session_id or (question_id + answer_id) is required", "data": None}
+    
+    reason = body.get("reason")
+    detail = body.get("detail")
+    
+    try:
+        # 获取 feedback 存储目录
+        feedback_dir = Path("feedback")
+        if not feedback_dir.exists():
+            feedback_dir = Path("backend/feedback")
+        if not feedback_dir.exists():
+            feedback_dir = Path("/root/usr/skill_agent_demo/backend/feedback")
+        feedback_dir.mkdir(parents=True, exist_ok=True)
+        
+        user_feedback_file = feedback_dir / f"{user_id}_feedback.json"
+        
+        # 读取现有反馈
+        existing_feedback = []
+        if user_feedback_file.exists():
+            try:
+                existing_feedback = json.loads(user_feedback_file.read_text(encoding='utf-8'))
+            except:
+                existing_feedback = []
+        
+        # 🌳 查找是否已有该 turn + branch 的反馈
+        feedback_key = f"{session_id}_{branch}_{turn_id}"
+        found_idx = None
+        for i, fb in enumerate(existing_feedback):
+            # 🌳 匹配 session + branch + turn（branch 默认为 main）
+            fb_branch = fb.get("branch", "main")
+            if fb.get("session_id") == session_id and fb_branch == branch and fb.get("turn_number") == turn_id:
+                found_idx = i
+                break
+        
+        if feedback_type == "cancel":
+            # 取消反馈：删除现有记录
+            if found_idx is not None:
+                existing_feedback.pop(found_idx)
+                logger.info(f"🗑️ Feedback cancelled: {feedback_key}")
+        else:
+            # 创建/更新反馈
+            feedback_data = {
+                "feedback_id": f"fb_{feedback_key}_{datetime.now().strftime('%Y%m%d%H%M%S')}",
+                "user_id": user_id,
+                "session_id": session_id,
+                "branch": branch,  # 🌳 保存分支信息
+                "turn_number": turn_id,
+                "feedback_type": feedback_type,
+                "reason": reason,
+                "detail": detail,
+                "timestamp": datetime.now().isoformat()
+            }
+            
+            if found_idx is not None:
+                # 更新现有反馈
+                existing_feedback[found_idx] = feedback_data
+                logger.info(f"🔄 Feedback updated: {feedback_key} -> {feedback_type}")
+            else:
+                # 新增反馈
+                existing_feedback.append(feedback_data)
+                logger.info(f"✅ Feedback submitted: {feedback_key} -> {feedback_type}")
+        
+        # 写回文件
+        user_feedback_file.write_text(
+            json.dumps(existing_feedback, ensure_ascii=False, indent=2),
+            encoding='utf-8'
+        )
+        
+        return {
+            "code": 0,
+            "msg": "Success",
+            "data": {
+                "session_id": session_id,
+                "turn_id": turn_id,
+                "branch": branch,
+                "feedback_type": feedback_type,
+                "action": "cancelled" if feedback_type == "cancel" else "saved"
+            }
+        }
+        
+    except Exception as e:
+        logger.error(f"❌ Failed to submit feedback: {e}")
+        return {
+            "code": 500,
+            "msg": f"Failed: {str(e)}",
+            "data": None
+        }
+
+
+@router.get("/feedback")
+async def get_feedback(
+    user_id: str = Query(..., description="用户 ID"),
+    question_id: str = Query(..., alias="aiQuestionId", description="题目 ID"),
+    answer_id: str = Query(..., alias="answerId", description="答案 ID"),
+    turn_id: Optional[int] = Query(None, description="指定轮次（不传则返回全部）")
+):
+    """
+    📜 获取反馈状态
+    """
+    from pathlib import Path
+    
+    session_id = f"q{question_id}_a{answer_id}"
+    
+    try:
+        feedback_dir = Path("feedback")
+        if not feedback_dir.exists():
+            feedback_dir = Path("backend/feedback")
+        if not feedback_dir.exists():
+            feedback_dir = Path("/root/usr/skill_agent_demo/backend/feedback")
+        
+        user_feedback_file = feedback_dir / f"{user_id}_feedback.json"
+        
+        if not user_feedback_file.exists():
+            return {
+                "code": 0,
+                "msg": "Success",
+                "data": {
+                    "session_id": session_id,
+                    "feedbacks": []
+                }
+            }
+        
+        all_feedback = json.loads(user_feedback_file.read_text(encoding='utf-8'))
+        
+        # 筛选当前 session
+        session_feedback = [
+            fb for fb in all_feedback 
+            if fb.get("session_id") == session_id
+        ]
+        
+        # 如果指定了 turn_id，进一步筛选
+        if turn_id is not None:
+            session_feedback = [
+                fb for fb in session_feedback
+                if fb.get("turn_number") == turn_id
+            ]
+        
+        return {
+            "code": 0,
+            "msg": "Success",
+            "data": {
+                "session_id": session_id,
+                "feedbacks": session_feedback
+            }
+        }
+        
+    except Exception as e:
+        logger.error(f"❌ Failed to get feedback: {e}")
+        return {
+            "code": 500,
+            "msg": f"Failed: {str(e)}",
             "data": None
         }

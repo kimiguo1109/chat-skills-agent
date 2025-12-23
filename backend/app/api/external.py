@@ -195,13 +195,23 @@ async def get_user_language_from_studyx(token: str, environment: str = "test") -
             async with session.get(api_url, headers=headers, timeout=5) as response:
                 if response.status == 200:
                     data = await response.json()
+                    logger.info(f"🌐 StudyX language API response: code={data.get('code')}, data={data.get('data')}, msg={data.get('msg')}")
+                    
                     if data.get("code") == 0 and data.get("data"):
                         qlang = data["data"].get("qlang", "English")
                         lang_code = QLANG_TO_CODE.get(qlang, "auto")
                         logger.info(f"🌐 User language from StudyX: {qlang} → {lang_code}")
                         return lang_code
+                    elif data.get("code") == -1 and "no user preferences" in data.get("msg", "").lower():
+                        # 🆕 用户没有设置语言偏好（code=-1），返回默认英语
+                        logger.info(f"🌐 User has no language preference set (code=-1), using default: en")
+                        return "en"
+                    elif data.get("code") == 0 and not data.get("data"):
+                        # 用户没有设置语言偏好（data 为空），返回默认英语
+                        logger.info(f"🌐 User has no language preference set (empty data), using default: en")
+                        return "en"
                     else:
-                        logger.warning(f"⚠️ StudyX API returned error: {data.get('msg')}")
+                        logger.warning(f"⚠️ StudyX API returned error: code={data.get('code')}, msg={data.get('msg')}")
                 else:
                     logger.warning(f"⚠️ StudyX API HTTP error: {response.status}")
     except asyncio.TimeoutError:
