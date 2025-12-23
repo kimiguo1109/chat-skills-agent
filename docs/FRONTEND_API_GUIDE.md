@@ -307,21 +307,21 @@ History API 返回 `turn_versions` 字段，包含每个 turn 的**所有历史�
             "action": "original",
             "timestamp": "2025-12-23T07:37:27",
             "user_message": "1+1+1",
-            "assistant_preview": "The sum of 1, 1, and 1 is 3."
+            "assistant_message": "To find the sum of 1, 1, and 1... (完整内容)"
           },
           {
             "version_id": 2,
             "is_original": false,
             "action": "edit",
             "user_message": "1+1+1+1",
-            "assistant_preview": "You're adding another '1'..."
+            "assistant_message": "To find the sum of 1, 1, 1, and 1... (完整内容)"
           },
           {
             "version_id": 3,
             "is_original": false,
             "action": "edit",
             "user_message": "1+1+1",
-            "assistant_preview": "The sum of 1 + 1 + 1 is 3."
+            "assistant_message": "The sum of 1 + 1 + 1 is 3. (完整内容)"
           }
         ]
       }
@@ -349,7 +349,7 @@ const currentVersion = turn1Versions[currentIndex];  // 当前显示的版本
 function onVersionChange(versionId) {
   const version = turn1Versions.find(v => v.version_id === versionId);
   setUserMessage(version.user_message);
-  setAssistantMessage(version.assistant_preview);
+  setAssistantMessage(version.assistant_message);  // 完整内容
 }
 ```
 
