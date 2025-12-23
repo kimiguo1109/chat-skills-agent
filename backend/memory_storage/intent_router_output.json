@@ -1,11 +1,81 @@
 {
   "description": "Intent Router 实时输出记录 (Phase 3 架构)",
-  "latest": {},
-  "history": [],
+  "latest": {
+    "timestamp": "2025-12-23T09:36:44.172481",
+    "user_message": "4+4",
+    "method": "llm_fallback_gemini",
+    "tokens_used": 108,
+    "results": [
+      {
+        "intent": "other",
+        "topic": null,
+        "confidence": 0.85,
+        "parameters": {}
+      }
+    ]
+  },
+  "history": [
+    {
+      "timestamp": "2025-12-23T09:36:34.829486",
+      "user_message": "3+3",
+      "method": "llm_fallback_gemini",
+      "tokens_used": 108,
+      "results": [
+        {
+          "intent": "other",
+          "topic": null,
+          "confidence": 0.9,
+          "parameters": {}
+        }
+      ]
+    },
+    {
+      "timestamp": "2025-12-23T09:36:35.829860",
+      "user_message": "1+2",
+      "method": "llm_fallback_gemini",
+      "tokens_used": 108,
+      "results": [
+        {
+          "intent": "other",
+          "topic": null,
+          "confidence": 0.9,
+          "parameters": {}
+        }
+      ]
+    },
+    {
+      "timestamp": "2025-12-23T09:36:39.986176",
+      "user_message": "4+4",
+      "method": "llm_fallback_gemini",
+      "tokens_used": 108,
+      "results": [
+        {
+          "intent": "other",
+          "topic": null,
+          "confidence": 0.85,
+          "parameters": {}
+        }
+      ]
+    },
+    {
+      "timestamp": "2025-12-23T09:36:44.172481",
+      "user_message": "4+4",
+      "method": "llm_fallback_gemini",
+      "tokens_used": 108,
+      "results": [
+        {
+          "intent": "other",
+          "topic": null,
+          "confidence": 0.85,
+          "parameters": {}
+        }
+      ]
+    }
+  ],
   "stats": {
-    "total_requests": 0,
+    "total_requests": 3,
     "rule_based_success": 0,
-    "llm_fallback": 0,
+    "llm_fallback": 3,
     "rule_success_rate": "0.0%"
   }
 }

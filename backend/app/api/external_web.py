@@ -186,6 +186,8 @@ async def _create_regenerate_branch(
     
     Returns: 新分支名称，或 None 如果失败
     """
+    from pathlib import Path
+    
     tree = await _load_version_tree(memory_manager, user_id, session_id)
     
     # 生成新分支名称
@@ -226,6 +228,84 @@ async def _create_regenerate_branch(
     
     # 保存
     await _save_version_tree(memory_manager, user_id, session_id, tree)
+    
+    # 🆕 同时保存到 versions.json（与 Edit 保持一致）
+    try:
+        artifacts_dir = memory_manager.artifact_storage.base_dir / user_id
+        versions_file = artifacts_dir / f"{session_id}_versions.json"
+        md_file = artifacts_dir / f"{session_id}.md"
+        
+        # 读取现有版本
+        versions = []
+        if versions_file.exists():
+            try:
+                versions = json.loads(versions_file.read_text(encoding='utf-8'))
+            except:
+                versions = []
+        
+        # 获取当前 turn 的原始回复和完整内容
+        old_response = ""
+        turn_content = ""
+        if md_file.exists():
+            content = md_file.read_text(encoding='utf-8')
+            turn_pattern = r'## Turn (\d+) - (\d{2}:\d{2}:\d{2})'
+            turns = list(re.finditer(turn_pattern, content))
+            
+            for i, match in enumerate(turns):
+                if int(match.group(1)) == turn_id:
+                    start = match.start()
+                    end = turns[i + 1].start() if i + 1 < len(turns) else len(content)
+                    turn_content = content[start:end]
+                    
+                    # 提取 response - 优先从 JSON 块提取
+                    json_match = re.search(r'"text":\s*"((?:[^"\\]|\\.)*)"', turn_content)
+                    if json_match:
+                        try:
+                            old_response = json.loads(f'"{json_match.group(1)}"')
+                        except:
+                            old_response = json_match.group(1).replace('\\n', '\n')
+                    # 备选：从 **Response**: 格式提取
+                    if not old_response:
+                        response_match = re.search(r'\*\*Response\*\*:\s*\n(.*?)(?:\n---|\n<details>|$)', turn_content, re.DOTALL)
+                        if response_match:
+                            old_response = response_match.group(1).strip()
+                    break
+        
+        # 🆕 检查是否已有原始版本，如果没有则先保存
+        existing_turn_versions = [v for v in versions if v.get("turn_id") == turn_id]
+        has_original = any(v.get("is_original", False) for v in existing_turn_versions)
+        
+        if not has_original and turn_content:
+            # 保存原始版本
+            versions.append({
+                "version_id": 1,
+                "turn_id": turn_id,
+                "action": "original",
+                "is_original": True,
+                "timestamp": datetime.now().isoformat(),
+                "content": turn_content,  # 保存完整 turn 内容
+                "message": user_message,
+                "response": old_response
+            })
+            logger.info(f"📝 Saved original version of turn {turn_id} before regenerate")
+        
+        # 添加 regenerate 版本（保存旧回复，等待新回复）
+        new_version_id = len([v for v in versions if v.get("turn_id") == turn_id]) + 1
+        versions.append({
+            "version_id": new_version_id,
+            "turn_id": turn_id,
+            "action": "regenerate",
+            "is_original": False,
+            "timestamp": datetime.now().isoformat(),
+            "message": user_message,  # Regenerate 时用户消息不变
+            "response": old_response  # 保存旧回复（regenerate 前的）
+        })
+        
+        versions_file.write_text(json.dumps(versions, ensure_ascii=False, indent=2), encoding='utf-8')
+        logger.info(f"🌳 Saved regenerate version to versions.json: turn {turn_id}, version {new_version_id}")
+        
+    except Exception as ver_err:
+        logger.warning(f"⚠️ Failed to save regenerate version: {ver_err}")
     
     logger.info(f"🌳 Created regenerate branch: {new_branch} (forked from {current_branch} at turn {turn_id})")
     return new_branch
@@ -817,6 +897,25 @@ async def generate_sse_stream(
                     text
                 )
                 actual_turn_id = turn_id  # 返回 regenerate 的 turn ID
+                
+                # 🆕 更新 versions.json 中最新的 regenerate 版本，添加新回复
+                try:
+                    from pathlib import Path
+                    artifacts_dir = orchestrator.memory_manager.artifact_storage.base_dir / user_id
+                    versions_file = artifacts_dir / f"{session_id}_versions.json"
+                    
+                    if versions_file.exists():
+                        versions = json.loads(versions_file.read_text(encoding='utf-8'))
+                        # 找到最新的 regenerate 版本（没有 new_response 的）
+                        for v in reversed(versions):
+                            if v.get("turn_id") == turn_id and v.get("action") == "regenerate" and "new_response" not in v:
+                                v["new_response"] = text  # 保存新回复
+                                logger.info(f"🌳 Updated regenerate version with new response")
+                                break
+                        versions_file.write_text(json.dumps(versions, ensure_ascii=False, indent=2), encoding='utf-8')
+                except Exception as ver_update_err:
+                    logger.warning(f"⚠️ Failed to update regenerate version: {ver_update_err}")
+                
                 logger.info(f"🌳 Regenerate complete: turn {turn_id} on branch '{active_branch}'")
             except Exception as regen_err:
                 logger.error(f"❌ Regenerate post-processing failed: {regen_err}")
@@ -1437,11 +1536,28 @@ async def _get_turn_message(
         md_file = artifacts_dir / f"{session_id}.md"
         
         if not md_file.exists():
+            logger.warning(f"⚠️ MD file not found: {md_file}")
             return None
         
         content = md_file.read_text(encoding='utf-8')
         
-        # 查找 turn 的 JSON 数据
+        # 🆕 方法1：直接从 Turn 标题后的 User Query 提取
+        turn_pattern = r'## Turn (\d+) - (\d{2}:\d{2}:\d{2})'
+        turns = list(re.finditer(turn_pattern, content))
+        
+        for i, match in enumerate(turns):
+            if int(match.group(1)) == turn_id:
+                start = match.start()
+                end = turns[i + 1].start() if i + 1 < len(turns) else len(content)
+                turn_content = content[start:end]
+                
+                # 从 User Query 块提取
+                user_match = re.search(r'### 👤 User Query\n(.*?)\n\n### 🤖', turn_content, re.DOTALL)
+                if user_match:
+                    return user_match.group(1).strip()
+                break
+        
+        # 🆕 方法2：备选 - 从 JSON 数据块提取
         json_pattern = r'```json\s*\n(\{[^`]+\})\s*\n```'
         matches = list(re.finditer(json_pattern, content, re.DOTALL))
         
@@ -2370,9 +2486,16 @@ async def get_chat_history(
             
             # 从 content 字段解析用户消息和助手回复
             content = v.get("content", "")
-            user_msg = v.get("message", "")  # Edit 时保存的新消息
-            # 🆕 优先从 response 字段获取完整内容，兼容旧的 response_preview
-            assistant_message = v.get("response") or v.get("response_preview", "")
+            user_msg = v.get("message", "")  # Edit/Regenerate 时保存的用户消息
+            action = v.get("action", "original")
+            
+            # 🆕 根据 action 类型选择回复字段
+            if action == "regenerate":
+                # Regenerate: new_response 是新生成的回复，response 是旧回复
+                assistant_message = v.get("new_response") or v.get("response", "")
+            else:
+                # Edit/Original: response 字段
+                assistant_message = v.get("response") or v.get("response_preview", "")
             
             # 如果是原始版本，从 content 中解析完整内容
             if v.get("is_original") and content:
@@ -2399,7 +2522,7 @@ async def get_chat_history(
             turn_versions_map[turn_id].append({
                 "version_id": v.get("version_id"),
                 "is_original": v.get("is_original", False),
-                "action": v.get("action"),
+                "action": action,
                 "timestamp": v.get("timestamp"),
                 "user_message": user_msg,
                 "assistant_message": assistant_message  # 🔄 完整内容
@@ -2600,35 +2723,55 @@ async def get_chat_history(
                     "versions": sorted(versions_list, key=lambda x: x.get("version_id", 0))
                 }
         
-        # 🆕 重构 chat_list：如果有版本历史，用 turn_versions 的完整数据
+        # 🆕 重构 chat_list：优先从 turn_versions 读取所有版本
         enhanced_chat_list = []
-        for item in filtered_chat_list:
-            turn_num = item["turn"]
-            turn_key = str(turn_num)
-            
-            if turn_key in turn_versions and turn_versions[turn_key]["total_versions"] > 1:
-                # 这个 turn 有多个版本，为每个版本创建一条记录
-                versions = turn_versions[turn_key]["versions"]
+        processed_turns = set()
+        
+        # 首先处理有版本历史的 turns
+        for turn_key, version_data in turn_versions.items():
+            if version_data["total_versions"] > 0:
+                turn_num = int(turn_key)
+                processed_turns.add(turn_num)
+                
+                # 为每个版本创建一条记录
+                versions = version_data["versions"]
                 for v in versions:
+                    # 查找原始 item 以获取额外信息
+                    original_item = next((item for item in chat_list if item["turn"] == turn_num), {})
+                    
                     enhanced_chat_list.append({
                         "turn": turn_num,
                         "version_id": v["version_id"],
                         "total_versions": len(versions),
-                        "timestamp": v.get("timestamp", item["timestamp"]),
+                        "timestamp": v.get("timestamp", original_item.get("timestamp", "")),
                         "user_message": v["user_message"],
                         "assistant_message": v["assistant_message"],
-                        "referenced_text": item.get("referenced_text"),
-                        "files": item.get("files"),
-                        "feedback": item.get("feedback"),
+                        "referenced_text": original_item.get("referenced_text"),
+                        "files": original_item.get("files"),
+                        "feedback": original_item.get("feedback"),
                         "can_edit": True,
                         "can_regenerate": True,
                         "has_versions": True,
                         "is_original": v.get("is_original", False),
                         "action": v.get("action", "original")
                     })
-            else:
-                # 没有版本历史，保持原样
-                enhanced_chat_list.append(item)
+        
+        # 然后添加没有版本历史的 turns（排除 regenerate 产生的重复 turn）
+        for item in filtered_chat_list:
+            turn_num = item["turn"]
+            if turn_num not in processed_turns:
+                # 检查是否是 regenerate 产生的重复（user_message 与某个有版本的 turn 相同）
+                is_duplicate = False
+                for turn_key, version_data in turn_versions.items():
+                    for v in version_data["versions"]:
+                        if v["user_message"] == item.get("user_message"):
+                            is_duplicate = True
+                            break
+                    if is_duplicate:
+                        break
+                
+                if not is_duplicate:
+                    enhanced_chat_list.append(item)
         
         return {
             "code": 0,
