@@ -628,8 +628,19 @@ async def generate_sse_stream(
         
         # 3. 处理 Edit/Regenerate
         if action == ActionType.EDIT:
+            # 🆕 如果没有 turn_id，尝试从 version_path 提取
+            if not turn_id and version_path:
+                try:
+                    # version_path 格式: "turn_id:version_id" 或 "turn_id:null"
+                    parts = version_path.split(":")
+                    if parts[0].isdigit():
+                        turn_id = int(parts[0])
+                        logger.info(f"🆕 Extracted turn_id={turn_id} from version_path={version_path}")
+                except Exception as e:
+                    logger.warning(f"⚠️ Failed to extract turn_id from version_path: {e}")
+            
             if not turn_id:
-                yield f"data: {json.dumps({'type': 'error', 'message': 'turn_id is required for edit action'})}\n\n"
+                yield f"data: {json.dumps({'type': 'error', 'message': 'turn_id is required for edit action (can also use version_path)'})}\n\n"
                 return
             
             if not message:
@@ -651,6 +662,16 @@ async def generate_sse_stream(
                 logger.warning(f"⚠️ Failed to create edit branch, continuing anyway")
             
         elif action == ActionType.REGENERATE:
+            # 🆕 如果没有 turn_id，尝试从 version_path 提取
+            if not turn_id and version_path:
+                try:
+                    parts = version_path.split(":")
+                    if parts[0].isdigit():
+                        turn_id = int(parts[0])
+                        logger.info(f"🆕 Extracted turn_id={turn_id} from version_path={version_path}")
+                except Exception as e:
+                    logger.warning(f"⚠️ Failed to extract turn_id from version_path: {e}")
+            
             # 🌳 树状版本管理：Regenerate 创建新分支
             actual_turn_count = await _get_current_turn_count(
                 orchestrator.memory_manager,
