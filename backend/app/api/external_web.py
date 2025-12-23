@@ -1960,6 +1960,36 @@ async def clear_session(
             except Exception as cache_err:
                 logger.warning(f"⚠️ Cache cleanup failed (non-critical): {cache_err}")
             
+            # 6. 🆕 清除该 session 的 feedback
+            feedback_cleared = 0
+            try:
+                feedback_dir = Path("feedback")
+                if not feedback_dir.exists():
+                    feedback_dir = Path("backend/feedback")
+                if not feedback_dir.exists():
+                    feedback_dir = Path("/root/usr/skill_agent_demo/backend/feedback")
+                
+                user_feedback_file = feedback_dir / f"{request.user_id}_feedback.json"
+                if user_feedback_file.exists():
+                    existing_feedback = json.loads(user_feedback_file.read_text(encoding='utf-8'))
+                    # 过滤掉该 session 的反馈
+                    original_count = len(existing_feedback)
+                    filtered_feedback = [fb for fb in existing_feedback if fb.get("session_id") != session_id]
+                    feedback_cleared = original_count - len(filtered_feedback)
+                    
+                    if feedback_cleared > 0:
+                        user_feedback_file.write_text(json.dumps(filtered_feedback, ensure_ascii=False, indent=2), encoding='utf-8')
+                        logger.info(f"🧹 Cleared {feedback_cleared} feedback entries for session: {session_id}")
+            except Exception as fb_err:
+                logger.warning(f"⚠️ Feedback cleanup failed (non-critical): {fb_err}")
+            
+            # 7. 🆕 删除 tree.json 文件
+            tree_file = artifacts_dir / f"{session_id}_tree.json"
+            if tree_file.exists():
+                tree_file.unlink()
+                deleted_files.append(str(tree_file))
+                logger.info(f"🗑️ Deleted local tree: {tree_file}")
+            
             return {
                 "code": 0,
                 "msg": "Session cleared successfully",
@@ -1969,6 +1999,7 @@ async def clear_session(
                     "previous_turns": previous_turns,
                     "deleted_local": len(deleted_files),
                     "deleted_s3": len(s3_deleted),
+                    "feedback_cleared": feedback_cleared,
                     "new_session_ready": True
                 }
             }

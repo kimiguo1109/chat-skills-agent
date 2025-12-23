@@ -1,81 +1,47 @@
 {
   "description": "Intent Router 实时输出记录 (Phase 3 架构)",
   "latest": {
-    "timestamp": "2025-12-23T09:36:44.172481",
-    "user_message": "4+4",
-    "method": "llm_fallback_gemini",
-    "tokens_used": 108,
+    "timestamp": "2025-12-23T09:38:22.153282",
+    "user_message": "Hello",
+    "method": "skill_registry",
+    "tokens_used": 0,
     "results": [
       {
         "intent": "other",
         "topic": null,
-        "confidence": 0.85,
-        "parameters": {}
+        "confidence": 0.95,
+        "parameters": {
+          "topic": null,
+          "is_conversation": true,
+          "has_files": null
+        }
       }
     ]
   },
   "history": [
     {
-      "timestamp": "2025-12-23T09:36:34.829486",
-      "user_message": "3+3",
-      "method": "llm_fallback_gemini",
-      "tokens_used": 108,
+      "timestamp": "2025-12-23T09:38:22.153282",
+      "user_message": "Hello",
+      "method": "skill_registry",
+      "tokens_used": 0,
       "results": [
         {
           "intent": "other",
           "topic": null,
-          "confidence": 0.9,
-          "parameters": {}
-        }
-      ]
-    },
-    {
-      "timestamp": "2025-12-23T09:36:35.829860",
-      "user_message": "1+2",
-      "method": "llm_fallback_gemini",
-      "tokens_used": 108,
-      "results": [
-        {
-          "intent": "other",
-          "topic": null,
-          "confidence": 0.9,
-          "parameters": {}
-        }
-      ]
-    },
-    {
-      "timestamp": "2025-12-23T09:36:39.986176",
-      "user_message": "4+4",
-      "method": "llm_fallback_gemini",
-      "tokens_used": 108,
-      "results": [
-        {
-          "intent": "other",
-          "topic": null,
-          "confidence": 0.85,
-          "parameters": {}
-        }
-      ]
-    },
-    {
-      "timestamp": "2025-12-23T09:36:44.172481",
-      "user_message": "4+4",
-      "method": "llm_fallback_gemini",
-      "tokens_used": 108,
-      "results": [
-        {
-          "intent": "other",
-          "topic": null,
-          "confidence": 0.85,
-          "parameters": {}
+          "confidence": 0.95,
+          "parameters": {
+            "topic": null,
+            "is_conversation": true,
+            "has_files": null
+          }
         }
       ]
     }
   ],
   "stats": {
-    "total_requests": 3,
+    "total_requests": 1,
     "rule_based_success": 0,
-    "llm_fallback": 3,
+    "llm_fallback": 0,
     "rule_success_rate": "0.0%"
   }
 }
