@@ -69,14 +69,14 @@ backend/token_stats/
 # Logs directory
 logs/
 
-# Test files
-test_*.sh
+# Test files (保留重要测试脚本)
+# test_*.sh  # 注释掉，允许测试脚本上传
 
-# Service scripts (环境相关)
-start_services.sh
-stop_services.sh
-status_services.sh
-configure_public_access.sh
+# Service scripts (保留服务启动脚本)
+# start_services.sh    # 注释掉，允许上传
+# stop_services.sh     # 注释掉，允许上传
+# status_services.sh   # 注释掉，允许上传
+# configure_public_access.sh  # 注释掉，允许上传
 
 # PID files
 *.pid
