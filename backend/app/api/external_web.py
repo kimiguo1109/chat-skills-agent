@@ -2774,11 +2774,29 @@ async def get_chat_history(
         
         # 🆕 构建 turn_versions：包含每个 turn 的所有历史版本
         turn_versions = {}
+        
+        # 首先从 versions_map 添加有多个版本的 turns
         for turn_id, versions_list in turn_versions_map.items():
             if len(versions_list) > 0:
                 turn_versions[str(turn_id)] = {
                     "total_versions": len(versions_list),
                     "versions": sorted(versions_list, key=lambda x: x.get("version_id", 0))
+                }
+        
+        # 🆕 然后为没有版本历史的 turns 添加默认版本信息
+        for item in chat_list:
+            turn_num = item["turn"]
+            if str(turn_num) not in turn_versions:
+                turn_versions[str(turn_num)] = {
+                    "total_versions": 1,
+                    "versions": [{
+                        "version_id": 1,
+                        "is_original": True,
+                        "action": "original",
+                        "timestamp": item.get("timestamp"),
+                        "user_message": item.get("user_message", ""),
+                        "assistant_message": item.get("assistant_message", "")
+                    }]
                 }
         
         # 🆕 重构 chat_list：返回当前版本路径的对话（每个 turn 只显示一条）
