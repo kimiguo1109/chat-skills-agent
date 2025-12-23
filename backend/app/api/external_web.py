@@ -2825,6 +2825,10 @@ async def get_chat_history(
                 if not is_duplicate:
                     enhanced_chat_list.append(item)
         
+        # 🆕 按 turn 顺序排序，确保 Turn 1 在前，Turn 2 在后
+        # 同一 turn 的不同版本按 version_id 排序
+        enhanced_chat_list.sort(key=lambda x: (x.get("turn", 0), x.get("version_id", 0)))
+        
         return {
             "code": 0,
             "msg": "Success",

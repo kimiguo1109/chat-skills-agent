@@ -1,14 +1,14 @@
 {
   "description": "Intent Router 实时输出记录 (Phase 3 架构)",
   "latest": {
-    "timestamp": "2025-12-23T09:41:28.833477",
-    "user_message": "3+3",
+    "timestamp": "2025-12-23T09:46:19.804451",
+    "user_message": "mở bài trước tiên là \" Bài thơ 'Miền Trung' của Phan Xuân Luật...",
     "method": "llm_fallback_gemini",
-    "tokens_used": 108,
+    "tokens_used": 134,
     "results": [
       {
-        "intent": "other",
-        "topic": null,
+        "intent": "explain",
+        "topic": "Bài thơ 'Miền Trung' của Phan Xuân Luật",
         "confidence": 0.9,
         "parameters": {}
       }
@@ -16,44 +16,14 @@
   },
   "history": [
     {
-      "timestamp": "2025-12-23T09:41:23.548516",
-      "user_message": "Answer the question",
-      "method": "skill_registry",
-      "tokens_used": 0,
-      "results": [
-        {
-          "intent": "quiz_request",
-          "topic": "Mathematics",
-          "confidence": 1.0,
-          "parameters": {
-            "topic": "Mathematics"
-          }
-        }
-      ]
-    },
-    {
-      "timestamp": "2025-12-23T09:41:23.950734",
-      "user_message": "2+2",
+      "timestamp": "2025-12-23T09:46:19.804451",
+      "user_message": "mở bài trước tiên là \" Bài thơ 'Miền Trung' của Phan Xuân Luật...",
       "method": "llm_fallback_gemini",
-      "tokens_used": 108,
+      "tokens_used": 134,
       "results": [
         {
-          "intent": "other",
-          "topic": null,
-          "confidence": 0.9,
-          "parameters": {}
-        }
-      ]
-    },
-    {
-      "timestamp": "2025-12-23T09:41:28.833477",
-      "user_message": "3+3",
-      "method": "llm_fallback_gemini",
-      "tokens_used": 108,
-      "results": [
-        {
-          "intent": "other",
-          "topic": null,
+          "intent": "explain",
+          "topic": "Bài thơ 'Miền Trung' của Phan Xuân Luật",
           "confidence": 0.9,
           "parameters": {}
         }
@@ -61,9 +31,9 @@
     }
   ],
   "stats": {
-    "total_requests": 2,
+    "total_requests": 1,
     "rule_based_success": 0,
-    "llm_fallback": 2,
+    "llm_fallback": 1,
     "rule_success_rate": "0.0%"
   }
 }
