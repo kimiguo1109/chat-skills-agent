@@ -692,12 +692,24 @@ async def generate_sse_stream(
                 action = ActionType.SEND
             
             if action == ActionType.REGENERATE and turn_id:
-                # 获取原始消息
+                # 🆕 从 version_path 提取 version_id
+                regen_version_id = None
+                if version_path:
+                    try:
+                        parts = version_path.split(":")
+                        if len(parts) == 2 and parts[1].isdigit():
+                            regen_version_id = int(parts[1])
+                            logger.info(f"🌳 Regenerate: extracted version_id={regen_version_id} from version_path={version_path}")
+                    except Exception as e:
+                        logger.warning(f"⚠️ Failed to extract version_id from version_path: {e}")
+                
+                # 获取原始消息（指定版本）
                 original_message = await _get_turn_message(
                     orchestrator.memory_manager,
                     user_id,
                     session_id,
-                    turn_id
+                    turn_id,
+                    version_id=regen_version_id  # 🆕 传入版本 ID
                 )
                 
                 if not original_message:
@@ -1565,13 +1577,56 @@ async def _get_turn_message(
     memory_manager: MemoryManager,
     user_id: str,
     session_id: str,
-    turn_id: int
+    turn_id: int,
+    version_id: Optional[int] = None  # 🆕 支持指定版本
 ) -> Optional[str]:
-    """获取指定轮次的用户消息"""
+    """获取指定轮次的用户消息（支持指定版本）"""
     from pathlib import Path
     
     try:
         artifacts_dir = memory_manager.artifact_storage.base_dir / user_id
+        
+        # 🆕 如果指定了 version_id，先从 versions.json 获取
+        if version_id is not None:
+            versions_file = artifacts_dir / f"{session_id}_versions.json"
+            if versions_file.exists():
+                try:
+                    versions = json.loads(versions_file.read_text(encoding='utf-8'))
+                    for v in versions:
+                        if v.get("turn_id") == turn_id and v.get("version_id") == version_id:
+                            user_msg = v.get("user_message") or v.get("original_message")
+                            if user_msg:
+                                logger.info(f"🌳 Found message for turn {turn_id} v{version_id} from versions.json: {user_msg[:30]}...")
+                                return user_msg
+                except Exception as ver_err:
+                    logger.warning(f"⚠️ Failed to read versions.json: {ver_err}")
+            
+            # 🆕 也检查 tree.json
+            tree_file = artifacts_dir / f"{session_id}_tree.json"
+            if tree_file.exists():
+                try:
+                    tree = json.loads(tree_file.read_text(encoding='utf-8'))
+                    turn_info = tree.get("turns", {}).get(str(turn_id), {}).get("versions", {})
+                    
+                    # version_id=1 对应 main 分支
+                    if version_id == 1 and "main" in turn_info:
+                        user_msg = turn_info["main"].get("user_message")
+                        if user_msg:
+                            logger.info(f"🌳 Found message for turn {turn_id} v{version_id} from tree.json (main): {user_msg[:30]}...")
+                            return user_msg
+                    # version_id>1 查找对应分支
+                    else:
+                        for branch_name, branch_data in turn_info.items():
+                            # 尝试匹配 edit_X_vY 或 regen_X_vY 格式
+                            if f"_v{version_id}" in branch_name:
+                                user_msg = branch_data.get("user_message")
+                                if user_msg:
+                                    logger.info(f"🌳 Found message for turn {turn_id} v{version_id} from tree.json ({branch_name}): {user_msg[:30]}...")
+                                    return user_msg
+                except Exception as tree_err:
+                    logger.warning(f"⚠️ Failed to read tree.json: {tree_err}")
+        
+        # Fallback: 从 MD 文件获取（当前版本）
         md_file = artifacts_dir / f"{session_id}.md"
         
         if not md_file.exists():
@@ -1580,7 +1635,7 @@ async def _get_turn_message(
         
         content = md_file.read_text(encoding='utf-8')
         
-        # 🆕 方法1：直接从 Turn 标题后的 User Query 提取
+        # 方法1：直接从 Turn 标题后的 User Query 提取
         turn_pattern = r'## Turn (\d+) - (\d{2}:\d{2}:\d{2})'
         turns = list(re.finditer(turn_pattern, content))
         
@@ -1596,7 +1651,7 @@ async def _get_turn_message(
                     return user_match.group(1).strip()
                 break
         
-        # 🆕 方法2：备选 - 从 JSON 数据块提取
+        # 方法2：备选 - 从 JSON 数据块提取
         json_pattern = r'```json\s*\n(\{[^`]+\})\s*\n```'
         matches = list(re.finditer(json_pattern, content, re.DOTALL))
         

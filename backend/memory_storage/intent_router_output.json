@@ -1,43 +1,67 @@
 {
   "description": "Intent Router 实时输出记录 (Phase 3 架构)",
   "latest": {
-    "timestamp": "2025-12-24T09:01:11.762682",
-    "user_message": "What's the main concept being tested here?",
-    "method": "skill_registry",
-    "tokens_used": 0,
+    "timestamp": "2025-12-24T09:26:10.783557",
+    "user_message": "1+1+1",
+    "method": "llm_fallback_gemini",
+    "tokens_used": 109,
     "results": [
       {
-        "intent": "quiz_request",
-        "topic": "Basic Math Concepts",
-        "confidence": 0.9500000000000001,
-        "parameters": {
-          "topic": "Basic Math Concepts"
-        }
+        "intent": "other",
+        "topic": null,
+        "confidence": 0.85,
+        "parameters": {}
       }
     ]
   },
   "history": [
     {
-      "timestamp": "2025-12-24T09:01:11.762682",
-      "user_message": "What's the main concept being tested here?",
-      "method": "skill_registry",
-      "tokens_used": 0,
+      "timestamp": "2025-12-24T09:26:05.367030",
+      "user_message": "1+1+1",
+      "method": "llm_fallback_gemini",
+      "tokens_used": 109,
       "results": [
         {
-          "intent": "quiz_request",
-          "topic": "Basic Math Concepts",
-          "confidence": 0.9500000000000001,
-          "parameters": {
-            "topic": "Basic Math Concepts"
-          }
+          "intent": "other",
+          "topic": null,
+          "confidence": 0.85,
+          "parameters": {}
+        }
+      ]
+    },
+    {
+      "timestamp": "2025-12-24T09:26:08.143237",
+      "user_message": "1+1+1+2",
+      "method": "llm_fallback_gemini",
+      "tokens_used": 109,
+      "results": [
+        {
+          "intent": "other",
+          "topic": null,
+          "confidence": 0.7,
+          "parameters": {}
+        }
+      ]
+    },
+    {
+      "timestamp": "2025-12-24T09:26:10.783557",
+      "user_message": "1+1+1",
+      "method": "llm_fallback_gemini",
+      "tokens_used": 109,
+      "results": [
+        {
+          "intent": "other",
+          "topic": null,
+          "confidence": 0.85,
+          "parameters": {}
         }
       ]
     }
   ],
   "stats": {
-    "total_requests": 1,
+    "total_requests": 3,
     "rule_based_success": 0,
-    "llm_fallback": 0,
+    "llm_fallback": 3,
     "rule_success_rate": "0.0%"
   }
 }
