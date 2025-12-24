@@ -127,9 +127,9 @@ curl -X POST "http://localhost:8088/api/external/chat" \
 
 #### `POST /api/external/chat/web`
 
-**用途**: Web 端聊天接口，返回 SSE 流式响应
+**用途**: Web 端聊天接口，返回 SSE 流式响应，支持发送/编辑/重新生成
 
-**请求示例**:
+**请求示例 - 发送新消息**:
 ```bash
 curl -X POST "http://localhost:8088/api/external/chat/web" \
   -H "Content-Type: application/json" \
@@ -145,23 +145,105 @@ curl -X POST "http://localhost:8088/api/external/chat/web" \
   }'
 ```
 
+**请求示例 - 编辑问题**:
+```bash
+curl -X POST "http://localhost:8088/api/external/chat/web" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "user_id": "364593",
+    "question_id": "20000003451",
+    "answer_id": "7234",
+    "action": "edit",
+    "turn_id": 1,
+    "message": "修改后的问题内容",
+    "version_path": "1:1"
+  }'
+```
+
+**请求示例 - 重新生成回答**:
+```bash
+curl -X POST "http://localhost:8088/api/external/chat/web" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "user_id": "364593",
+    "question_id": "20000003451",
+    "answer_id": "7234",
+    "action": "regenerate",
+    "turn_id": 1
+  }'
+```
+
 **关键参数**:
 | 参数 | 类型 | 必填 | 说明 |
 |------|------|------|------|
-| `message` | string | 是 | 用户消息 |
+| `message` | string | send/edit 必填 | 用户消息 |
 | `user_id` | string | 是 | 用户 ID |
 | `question_id` | string | 是 | 题目 ID（数字格式，用于 session_id） |
 | `answer_id` | string | 是 | 答案 ID |
 | `resource_id` | string | 否 | 题目 slug（如 `96rhh58`，用于获取题目上下文） |
 | `action` | string | 是 | 操作类型: `send`, `edit`, `regenerate` |
+| `turn_id` | int | edit/regenerate 必填 | 要操作的 turn ID |
+| `version_path` | string | 否 | 版本路径，格式: `turn_id:version_id`，如 `1:2` |
 | `action_type` | string | 否 | 快捷按钮类型 |
 
 **SSE 响应格式**:
 ```
+data: {"type": "start", "action": "send", "turn_id": null, "timestamp": "..."}
+data: {"type": "thinking", "message": "Processing your request..."}
+data: {"type": "intent", "intent": "other", "content_type": "text", "topic": ""}
 data: {"type": "chunk", "content": "这道题"}
 data: {"type": "chunk", "content": "考察的是"}
-data: {"type": "done", "turn_id": 1, "intent": "other", "full_response": "这道题考察的是..."}
+data: {"type": "done", "turn_id": 1, "intent": "other", "full_response": "这道题考察的是...", "action": "send"}
+data: [DONE]
 ```
+
+**Edit/Regenerate 响应额外字段**:
+- `action: "edit"` 时: `version_updated: true`, `original_turn_id: 1`
+- `action: "regenerate"` 时: `branch_created: true`
+
+---
+
+#### `POST /api/external/chat/web/clear`
+
+**用途**: 清除会话历史
+
+**请求示例**:
+```bash
+curl -X POST "http://localhost:8088/api/external/chat/web/clear" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "user_id": "364593",
+    "question_id": "20000003451",
+    "answer_id": "7234"
+  }'
+```
+
+---
+
+#### `POST /api/external/chat/web/feedback`
+
+**用途**: 提交点赞/踩反馈
+
+**请求示例**:
+```bash
+curl -X POST "http://localhost:8088/api/external/chat/web/feedback" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "user_id": "364593",
+    "question_id": "20000003451",
+    "answer_id": "7234",
+    "turn_id": 1,
+    "version_id": 2,
+    "feedback_type": "like"
+  }'
+```
+
+**参数说明**:
+| 参数 | 类型 | 说明 |
+|------|------|------|
+| `turn_id` | int | 对话轮次 |
+| `version_id` | int | 版本 ID（每个版本独立 feedback） |
+| `feedback_type` | string/int | `"like"`, `"dislike"`, `"cancel"` 或 `1`, `2`, `0` |
 
 ---
 
@@ -226,11 +308,99 @@ curl "http://localhost:8088/api/external/chat/history?session_id=q20000003451_a7
 
 #### `GET /api/external/chat/web/history`
 
-**用途**: Web 端获取聊天历史
+**用途**: Web 端获取聊天历史（支持版本管理）
 
+**请求示例**:
 ```bash
+# 默认获取最新版本
 curl "http://localhost:8088/api/external/chat/web/history?aiQuestionId=20000003451&answerId=7234"
+
+# 指定版本路径（获取 Turn 1 的 v1 版本对话）
+curl "http://localhost:8088/api/external/chat/web/history?aiQuestionId=20000003451&answerId=7234&version_path=1:1"
 ```
+
+**参数说明**:
+| 参数 | 类型 | 说明 |
+|------|------|------|
+| `aiQuestionId` | string | 题目 ID |
+| `answerId` | string | 答案 ID |
+| `version_path` | string | 版本路径，格式: `turn_id:version_id`，如 `1:2` |
+
+**响应结构**:
+```json
+{
+  "code": 0,
+  "msg": "Success",
+  "data": {
+    "question_id": "20000003451",
+    "answer_id": "7234",
+    "session_id": "q20000003451_a7234",
+    "user_id": "364593",
+    
+    "chat_list": [
+      {
+        "turn": 1,
+        "version_id": 2,
+        "total_versions": 2,
+        "timestamp": "2025-12-24T01:42:52",
+        "user_message": "1+1+1",
+        "assistant_message": "...",
+        "feedback": null,
+        "can_edit": true,
+        "can_regenerate": true,
+        "has_versions": true,
+        "is_original": false,
+        "action": "regenerate"
+      }
+    ],
+    "total": 1,
+    
+    "all_versions": [
+      {
+        "turn": 1,
+        "version_id": 1,
+        "total_versions": 2,
+        "user_message": "1+1+1",
+        "assistant_message": "原始回答...",
+        "is_original": true,
+        "action": "original"
+      },
+      {
+        "turn": 1,
+        "version_id": 2,
+        "total_versions": 2,
+        "user_message": "1+1+1",
+        "assistant_message": "重新生成的回答...",
+        "is_original": false,
+        "action": "regenerate"
+      }
+    ],
+    "all_versions_total": 2,
+    
+    "turn_versions": {
+      "1": {
+        "total_versions": 2,
+        "versions": [
+          {"version_id": 1, "is_original": true, "action": "original", "user_message": "...", "assistant_message": "..."},
+          {"version_id": 2, "is_original": false, "action": "regenerate", "user_message": "...", "assistant_message": "..."}
+        ]
+      }
+    },
+    
+    "current_version_path": "default",
+    "has_versions": true
+  }
+}
+```
+
+**字段说明**:
+| 字段 | 说明 |
+|------|------|
+| `chat_list` | 当前版本路径的对话（每个 turn 显示选中的版本） |
+| `all_versions` | 所有版本列表（供版本切换使用） |
+| `turn_versions` | 每个 turn 的版本详情（按 turn 分组） |
+| `has_versions` | 是否有多版本（用于显示版本切换器） |
+| `action` | 版本来源: `original`, `edit`, `regenerate` |
 
 ---
 
@@ -289,6 +459,37 @@ Headers: { "token": "<token>" }
 - "flashcard_request" → 生成闪卡
 - "notes_request" → 生成笔记
 - "mindmap_request" → 生成思维导图
+```
+
+### 流程 5: 版本管理（Edit/Regenerate）
+
+```
+用户操作          后端处理                    存储结构
+─────────────────────────────────────────────────────────
+Send 新消息  →   追加新 turn            →   Turn N v1 (original)
+                                            
+Edit 问题    →   替换 turn 内容         →   Turn N v1 (original) 保存到 versions.json
+                保存旧版本                   Turn N v2 (edit) 替换到 MD 文件
+                                            
+Regenerate   →   替换 turn 回答         →   Turn N v1 (original) 保存到 versions.json
+                保存旧版本                   Turn N v2 (regenerate) 替换到 MD 文件
+```
+
+**前端版本切换**:
+1. 调用 `history` API 获取 `turn_versions`
+2. 渲染版本切换器（如 `1/2` `2/2`）
+3. 用户切换版本时，用 `version_path` 参数重新请求 `history`
+4. 继续对话时，传递 `version_path` 给 `chat/web` 接口
+
+**版本数据结构示例**:
+```
+Turn 1: 原始问题 "1+1"
+  ├── v1 (original): "1+1 = 2"
+  └── v2 (regenerate): "Let me explain: 1+1 = 2 because..."
+
+Turn 2: 继续提问 "1+1+1"  
+  ├── v1 (original): "1+1+1 = 3"
+  └── v2 (edit): 问题改为 "1+1+1+2"，回答 "= 5"
 ```
 
 ---
