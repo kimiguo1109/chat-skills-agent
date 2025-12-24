@@ -2946,12 +2946,83 @@ async def get_chat_history(
         
         all_versions_list.sort(key=lambda x: (x.get("turn", 0), x.get("version_id", 0)))
         
-        # 🆕 构建 version_tree（id + pid 格式，方便前端追溯父子关系）
-        # 格式: [{"id": "1_v1", "pid": "0", "turn": 1, "version_id": 1, "label": "用户消息", "action": "original"}, ...]
-        version_tree = []
+        # 🆕 构建新格式的 chat_data（按 turn + user_message 分组，包含 answerList）
+        # 格式: [{turn, user_message, action, answerList: [{version_id, assistant_message, feedback}], parent_version_id}, ...]
+        chat_data = []
         
         # 按 turn 顺序处理
         sorted_turns = sorted(turn_versions.keys(), key=lambda x: int(x))
+        
+        # 用于追踪每个 turn 的最后一个版本 ID（用于计算 parent_version_id）
+        last_version_by_turn = {}
+        
+        for turn_key in sorted_turns:
+            turn_num = int(turn_key)
+            version_data = turn_versions[turn_key]
+            versions = version_data["versions"]
+            
+            # 按 user_message 分组（同一 turn 下可能有不同的问题版本，如 edit）
+            message_groups = {}
+            for v in versions:
+                msg = v.get("user_message", "")
+                if msg not in message_groups:
+                    message_groups[msg] = {
+                        "versions": [],
+                        "first_action": v.get("action", "original"),
+                        "first_version_id": v.get("version_id"),
+                        "first_timestamp": v.get("timestamp"),
+                        "is_original": v.get("is_original", False)
+                    }
+                message_groups[msg]["versions"].append(v)
+            
+            # 为每个 user_message 创建一条记录
+            for msg, group in message_groups.items():
+                # 构建 answerList
+                answer_list = []
+                for v in sorted(group["versions"], key=lambda x: x.get("version_id", 0)):
+                    ver_id = v.get("version_id")
+                    fb_key = f"{turn_num}_{ver_id}"
+                    
+                    answer_list.append({
+                        "version_id": ver_id,
+                        "version_path": f"{turn_num}:{ver_id}",  # 🆕 格式: "turn:version_id"
+                        "feedback": feedback_map.get(fb_key),
+                        "assistant_message": v.get("assistant_message", ""),
+                        "action": v.get("action", "original"),
+                        "timestamp": v.get("timestamp")
+                    })
+                
+                # 计算 parent_version_id 和 parent_version_path
+                parent_version_id = None
+                parent_version_path = None
+                if turn_num > 1:
+                    prev_turn = str(turn_num - 1)
+                    if prev_turn in last_version_by_turn:
+                        parent_version_id = last_version_by_turn[prev_turn]
+                        parent_version_path = f"{int(prev_turn)}:{parent_version_id}"  # 🆕 格式: "turn:version_id"
+                
+                # 第一个版本的 version_path 作为这条记录的默认 path
+                first_version_path = f"{turn_num}:{group['first_version_id']}"
+                
+                chat_data.append({
+                    "turn": turn_num,
+                    "timestamp": group["first_timestamp"],
+                    "user_message": msg,
+                    "action": group["first_action"],
+                    "version_path": first_version_path,  # 🆕 这条记录的第一个版本 path
+                    "answerList": answer_list,
+                    "is_original": group["is_original"],
+                    "parent_version_id": parent_version_id,
+                    "parent_version_path": parent_version_path  # 🆕 父版本的 path
+                })
+                
+                # 更新该 turn 的最后版本 ID
+                if answer_list:
+                    last_version_by_turn[turn_key] = answer_list[-1]["version_id"]
+        
+        # 🆕 构建 version_tree（id + pid 格式，方便前端追溯父子关系）
+        # 格式: [{"id": "1_v1", "pid": "0", "turn": 1, "version_id": 1, "label": "用户消息", "action": "original"}, ...]
+        version_tree = []
         
         for turn_key in sorted_turns:
             turn_num = int(turn_key)
@@ -3002,6 +3073,9 @@ async def get_chat_history(
                 "answer_id": answer_id,
                 "session_id": session_id,
                 "user_id": user_id,
+                # 🆕 新格式：按 turn + user_message 分组，包含 answerList
+                "chat_data": chat_data,
+                "chat_data_total": len(chat_data),
                 # 🆕 当前版本路径的对话（每个 turn 一条，前端直接渲染）
                 "chat_list": current_chat_list,
                 "total": len(current_chat_list),

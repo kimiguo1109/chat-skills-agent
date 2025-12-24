@@ -1,39 +1,123 @@
 {
   "description": "Intent Router 实时输出记录 (Phase 3 架构)",
   "latest": {
-    "timestamp": "2025-12-24T06:34:52.808694",
-    "user_message": "Mohammed is a 13-year-old boy, he had a severe trauma from car accident, his haemoglobin was 6g/dl due to internal bleeding from ruptured spleen. The surgeon requested blood for urgent transfusion and to prepare patient for laparotomy. The father refuses blood transfusion totally. The surgeon and medical team tried to empower him with knowledge about risks of delaying and not giving him blood immediately but he still believes that blood transfusion carries many risks and will not agree on blood transfusion. What will you do in such cases?\nAs the patient is minor 13 years old then father is his guardian and has the right to decide for his child.\nAt 13 years old, the boy has the right to consent for himself.\nAsk the father to sign DAMA i.e., discharge against medical advice to protect yourself from medical-legal liability.\nThe guardianship is transferred here to other relative or to medical authority.",
+    "timestamp": "2025-12-24T06:52:48.162337",
+    "user_message": "میگم کد کار نمیکنه \nنفهمی بی پدر میگم فارسی بگو",
     "method": "llm_fallback_gemini",
-    "tokens_used": 343,
+    "tokens_used": 119,
     "results": [
       {
-        "intent": "quiz",
-        "topic": "medical ethics in pediatric care",
-        "confidence": 0.95,
+        "intent": "other",
+        "topic": null,
+        "confidence": 0.9,
         "parameters": {}
       }
     ]
   },
   "history": [
     {
-      "timestamp": "2025-12-24T06:34:52.808694",
-      "user_message": "Mohammed is a 13-year-old boy, he had a severe trauma from car accident, his haemoglobin was 6g/dl due to internal bleeding from ruptured spleen. The surgeon requested blood for urgent transfusion and to prepare patient for laparotomy. The father refuses blood transfusion totally. The surgeon and medical team tried to empower him with knowledge about risks of delaying and not giving him blood immediately but he still believes that blood transfusion carries many risks and will not agree on blood transfusion. What will you do in such cases?\nAs the patient is minor 13 years old then father is his guardian and has the right to decide for his child.\nAt 13 years old, the boy has the right to consent for himself.\nAsk the father to sign DAMA i.e., discharge against medical advice to protect yourself from medical-legal liability.\nThe guardianship is transferred here to other relative or to medical authority.",
+      "timestamp": "2025-12-24T06:51:58.717038",
+      "user_message": "کار نمیکنه",
       "method": "llm_fallback_gemini",
-      "tokens_used": 343,
+      "tokens_used": 110,
+      "results": [
+        {
+          "intent": "other",
+          "topic": null,
+          "confidence": 0.9,
+          "parameters": {}
+        }
+      ]
+    },
+    {
+      "timestamp": "2025-12-24T06:52:12.557733",
+      "user_message": "1+1=?",
+      "method": "llm_fallback_gemini",
+      "tokens_used": 109,
+      "results": [
+        {
+          "intent": "other",
+          "topic": null,
+          "confidence": 0.85,
+          "parameters": {}
+        }
+      ]
+    },
+    {
+      "timestamp": "2025-12-24T06:52:14.029711",
+      "user_message": "1+1=?",
+      "method": "llm_fallback_gemini",
+      "tokens_used": 109,
+      "results": [
+        {
+          "intent": "other",
+          "topic": null,
+          "confidence": 0.85,
+          "parameters": {}
+        }
+      ]
+    },
+    {
+      "timestamp": "2025-12-24T06:52:15.535217",
+      "user_message": "2+2=?",
+      "method": "llm_fallback_gemini",
+      "tokens_used": 109,
+      "results": [
+        {
+          "intent": "other",
+          "topic": null,
+          "confidence": 0.85,
+          "parameters": {}
+        }
+      ]
+    },
+    {
+      "timestamp": "2025-12-24T06:52:17.027497",
+      "user_message": "3+3=?",
+      "method": "llm_fallback_gemini",
+      "tokens_used": 109,
       "results": [
         {
           "intent": "quiz",
-          "topic": "medical ethics in pediatric care",
+          "topic": "数学",
           "confidence": 0.95,
+          "parameters": {}
+        }
+      ]
+    },
+    {
+      "timestamp": "2025-12-24T06:52:22.593524",
+      "user_message": "فارسی بگو",
+      "method": "llm_fallback_gemini",
+      "tokens_used": 110,
+      "results": [
+        {
+          "intent": "other",
+          "topic": null,
+          "confidence": 0.9,
+          "parameters": {}
+        }
+      ]
+    },
+    {
+      "timestamp": "2025-12-24T06:52:48.162337",
+      "user_message": "میگم کد کار نمیکنه \nنفهمی بی پدر میگم فارسی بگو",
+      "method": "llm_fallback_gemini",
+      "tokens_used": 119,
+      "results": [
+        {
+          "intent": "other",
+          "topic": null,
+          "confidence": 0.9,
           "parameters": {}
         }
       ]
     }
   ],
   "stats": {
-    "total_requests": 1,
+    "total_requests": 7,
     "rule_based_success": 0,
-    "llm_fallback": 1,
+    "llm_fallback": 7,
     "rule_success_rate": "0.0%"
   }
 }
