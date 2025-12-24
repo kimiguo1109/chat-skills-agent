@@ -258,66 +258,88 @@ async def fetch_question_context_from_studyx(qid: str, token: str, environment: 
         
         async with aiohttp.ClientSession() as session:
             headers = {"token": token}
-            # 🆕 routeType=3 支持公开访问（不需要登录），routeType=1 需要登录权限
-            params = {"id": qid, "type": "3", "routeType": "3"}
             
-            async with session.get(
-                api_url, 
-                headers=headers, 
-                params=params,
-                timeout=10
-            ) as response:
-                if response.status == 200:
-                    data = await response.json()
-                    api_code = data.get("code")
-                    api_msg = data.get("msg", "")
-                    logger.info(f"📡 StudyX question API response: code={api_code}, msg={api_msg}")
-                    
-                    # 🆕 处理不同的 API 响应码
-                    if api_code == 0 and data.get("data"):
-                        qnt_info = data["data"].get("qntInfo", {})
-                        
-                        # 提取题目文本（优先使用 questionText，其次 imgText）
-                        question_text = qnt_info.get("questionText") or qnt_info.get("imgText") or ""
-                        
-                        # 提取答案文本
-                        answer_list = qnt_info.get("answerList", [])
-                        answer_text = ""
-                        if answer_list:
-                            # 获取第一个答案的内容
-                            first_answer = answer_list[0]
-                            answer_text = first_answer.get("answerText", "")
-                        
-                        if question_text or answer_text:
-                            context_parts = []
-                            if question_text:
-                                context_parts.append(f"Question:\n{question_text}")
-                            if answer_text:
-                                # 截取答案，避免太长（保留前2000字符）
-                                if len(answer_text) > 2000:
-                                    answer_text = answer_text[:2000] + "...(truncated)"
-                                context_parts.append(f"Answer/Solution:\n{answer_text}")
+            # 🆕 策略：先尝试 routeType=1（用户授权访问），如果失败再尝试 routeType=3（公开访问）
+            # 因为用户私有题目只能通过 routeType=1 + token 访问
+            last_error_type = "error"
+            
+            for route_type in ["1", "3"]:
+                params = {"id": qid, "type": "3", "routeType": route_type}
+                logger.info(f"📡 Trying routeType={route_type} for qid={qid}")
+                
+                try:
+                    async with session.get(
+                        api_url, 
+                        headers=headers, 
+                        params=params,
+                        timeout=10
+                    ) as response:
+                        if response.status == 200:
+                            data = await response.json()
+                            api_code = data.get("code")
+                            api_msg = data.get("msg", "")
+                            logger.info(f"📡 StudyX question API response (routeType={route_type}): code={api_code}, msg={api_msg}")
                             
-                            context = "\n\n".join(context_parts)
-                            logger.info(f"✅ Fetched question context: qid={qid}, len={len(context)}")
-                            return context, None  # 成功
+                            # ✅ 成功获取题目
+                            if api_code == 0 and data.get("data"):
+                                qnt_info = data["data"].get("qntInfo", {})
+                                
+                                # 提取题目文本（优先使用 questionText，其次 imgText）
+                                question_text = qnt_info.get("questionText") or qnt_info.get("imgText") or ""
+                                
+                                # 提取答案文本
+                                answer_list = qnt_info.get("answerList", [])
+                                answer_text = ""
+                                if answer_list:
+                                    # 获取第一个答案的内容
+                                    first_answer = answer_list[0]
+                                    answer_text = first_answer.get("answerText", "")
+                                
+                                if question_text or answer_text:
+                                    context_parts = []
+                                    if question_text:
+                                        context_parts.append(f"Question:\n{question_text}")
+                                    if answer_text:
+                                        # 截取答案，避免太长（保留前2000字符）
+                                        if len(answer_text) > 2000:
+                                            answer_text = answer_text[:2000] + "...(truncated)"
+                                        context_parts.append(f"Answer/Solution:\n{answer_text}")
+                                    
+                                    context = "\n\n".join(context_parts)
+                                    logger.info(f"✅ Fetched question context: qid={qid}, routeType={route_type}, len={len(context)}")
+                                    return context, None  # 成功
+                                else:
+                                    logger.warning(f"⚠️ Empty question context for qid={qid}")
+                                    last_error_type = "empty"
+                                    # 继续尝试下一个 routeType
+                                    continue
+                            
+                            # ❌ 处理 API 错误码
+                            elif api_code == 410:
+                                logger.info(f"⚠️ routeType={route_type} returned 410 Gone, trying next...")
+                                last_error_type = "not_found"
+                                # 继续尝试下一个 routeType
+                                continue
+                            elif api_code == 302:
+                                logger.info(f"⚠️ routeType={route_type} returned 302 Permission denied, trying next...")
+                                last_error_type = "permission"
+                                # 继续尝试下一个 routeType
+                                continue
+                            else:
+                                logger.warning(f"⚠️ StudyX question API error: code={api_code}, msg={api_msg}")
+                                last_error_type = "error"
+                                continue
                         else:
-                            logger.warning(f"⚠️ Empty question context for qid={qid}")
-                            return None, "empty"
-                    
-                    # 🆕 处理 API 错误码
-                    elif api_code == 410:
-                        logger.warning(f"⚠️ Question not found or deleted: qid={qid} (410 Gone)")
-                        return None, "not_found"
-                    elif api_code == 302:
-                        logger.warning(f"⚠️ No permission to access question: qid={qid} (302)")
-                        return None, "permission"
-                    else:
-                        logger.warning(f"⚠️ StudyX question API error: code={api_code}, msg={api_msg}")
-                        return None, "error"
-                else:
-                    logger.warning(f"⚠️ StudyX question API HTTP error: {response.status}")
-                    return None, "error"
+                            logger.warning(f"⚠️ StudyX question API HTTP error: {response.status}")
+                            last_error_type = "error"
+                            continue
+                except Exception as e:
+                    logger.warning(f"⚠️ Error with routeType={route_type}: {e}")
+                    continue
+            
+            # 所有 routeType 都失败了
+            logger.warning(f"⚠️ All routeTypes failed for qid={qid}, last_error={last_error_type}")
+            return None, last_error_type
                     
     except asyncio.TimeoutError:
         logger.warning(f"⚠️ StudyX question API timeout for qid={qid}")

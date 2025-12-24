@@ -2946,6 +2946,54 @@ async def get_chat_history(
         
         all_versions_list.sort(key=lambda x: (x.get("turn", 0), x.get("version_id", 0)))
         
+        # 🆕 构建 version_tree（id + pid 格式，方便前端追溯父子关系）
+        # 格式: [{"id": "1_v1", "pid": "0", "turn": 1, "version_id": 1, "label": "用户消息", "action": "original"}, ...]
+        version_tree = []
+        
+        # 按 turn 顺序处理
+        sorted_turns = sorted(turn_versions.keys(), key=lambda x: int(x))
+        
+        for turn_key in sorted_turns:
+            turn_num = int(turn_key)
+            version_data = turn_versions[turn_key]
+            
+            for v in version_data["versions"]:
+                ver_id = v["version_id"]
+                node_id = f"{turn_num}_v{ver_id}"
+                
+                # 计算 pid（父节点 ID）
+                # 规则：
+                # - Turn 1 v1 (original): pid = "0"（根节点）
+                # - Turn 1 v2+ (edit/regenerate): pid = 同 turn 的前一个版本
+                # - Turn N (N>1) 的 v1: pid = 上一个 turn 的最新版本
+                # - Turn N 的 v2+（edit/regenerate）: pid = 同 turn 的前一个版本
+                if turn_num == 1 and ver_id == 1:
+                    # Turn 1 v1 是根节点
+                    pid = "0"
+                elif ver_id > 1:
+                    # 任何 turn 的 v2+: 基于同 turn 的前一个版本
+                    pid = f"{turn_num}_v{ver_id - 1}"
+                else:  # turn_num > 1 and ver_id == 1
+                    # Turn N 的 v1: 基于上一个 turn 的最新版本
+                    prev_turn = str(turn_num - 1)
+                    if prev_turn in turn_versions:
+                        prev_versions = turn_versions[prev_turn]["versions"]
+                        prev_latest = max(prev_versions, key=lambda x: x["version_id"])
+                        pid = f"{turn_num - 1}_v{prev_latest['version_id']}"
+                    else:
+                        pid = "0"
+                
+                version_tree.append({
+                    "id": node_id,
+                    "pid": pid,
+                    "turn": turn_num,
+                    "version_id": ver_id,
+                    "label": v["user_message"][:30] + "..." if len(v.get("user_message", "")) > 30 else v.get("user_message", ""),
+                    "action": v.get("action", "original"),
+                    "is_original": v.get("is_original", False),
+                    "timestamp": v.get("timestamp")
+                })
+        
         return {
             "code": 0,
             "msg": "Success",
@@ -2962,6 +3010,8 @@ async def get_chat_history(
                 "all_versions_total": len(all_versions_list),
                 # 🆕 每个 turn 的版本信息（告诉前端哪些 turn 有多个版本可切换）
                 "turn_versions": turn_versions if turn_versions else None,
+                # 🆕 版本树（id + pid 格式，前端追溯父子关系）
+                "version_tree": version_tree if version_tree else None,
                 # 🆕 当前选中的版本路径
                 "current_version_path": version_path or "default",
                 "has_versions": len(turn_versions) > 0
