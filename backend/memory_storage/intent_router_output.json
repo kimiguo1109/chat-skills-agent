@@ -1,11 +1,39 @@
 {
   "description": "Intent Router 实时输出记录 (Phase 3 架构)",
-  "latest": {},
-  "history": [],
+  "latest": {
+    "timestamp": "2025-12-24T08:54:41.915491",
+    "user_message": "точный кыскаша шешу",
+    "method": "llm_fallback_gemini",
+    "tokens_used": 113,
+    "results": [
+      {
+        "intent": "explain",
+        "topic": null,
+        "confidence": 0.85,
+        "parameters": {}
+      }
+    ]
+  },
+  "history": [
+    {
+      "timestamp": "2025-12-24T08:54:41.915491",
+      "user_message": "точный кыскаша шешу",
+      "method": "llm_fallback_gemini",
+      "tokens_used": 113,
+      "results": [
+        {
+          "intent": "explain",
+          "topic": null,
+          "confidence": 0.85,
+          "parameters": {}
+        }
+      ]
+    }
+  ],
   "stats": {
-    "total_requests": 0,
+    "total_requests": 1,
     "rule_based_success": 0,
-    "llm_fallback": 0,
+    "llm_fallback": 1,
     "rule_success_rate": "0.0%"
   }
 }

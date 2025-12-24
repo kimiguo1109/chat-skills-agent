@@ -2946,6 +2946,66 @@ async def get_chat_history(
         
         all_versions_list.sort(key=lambda x: (x.get("turn", 0), x.get("version_id", 0)))
         
+        # 🆕 加载 tree.json 以支持分支过滤
+        tree = await _load_version_tree(orchestrator.memory_manager, user_id, session_id)
+        
+        # 🆕 根据 version_path 确定要显示的分支
+        target_branch = None
+        if version_path and tree.get("turns"):
+            # 解析 version_path（如 "1:1" -> turn=1, version=1）
+            try:
+                parts = version_path.split(":")
+                if len(parts) == 2:
+                    vp_turn = int(parts[0])
+                    vp_version = int(parts[1])
+                    
+                    # 在 tree.turns 中查找该版本属于哪个分支
+                    turn_info = tree.get("turns", {}).get(str(vp_turn), {})
+                    turn_versions_in_tree = turn_info.get("versions", {})
+                    
+                    # 根据 version_id 确定分支
+                    # version 1 通常是 main 分支，version 2+ 通常是 edit/regen 分支
+                    if vp_version == 1:
+                        target_branch = "main"
+                    else:
+                        # 查找对应的分支
+                        for branch_name, branch_data in turn_versions_in_tree.items():
+                            # 通过时间戳或其他方式匹配
+                            # 简单策略：edit_X_vY 对应 version Y
+                            if f"_v{vp_version}" in branch_name:
+                                target_branch = branch_name
+                                break
+                        # 如果没找到，使用 edit_turn_vVersion 格式查找
+                        if not target_branch:
+                            candidate = f"edit_{vp_turn}_v{vp_version}"
+                            if candidate in tree.get("branches", {}):
+                                target_branch = candidate
+                    
+                    logger.info(f"🌳 [History] version_path={version_path} -> target_branch={target_branch}")
+            except Exception as e:
+                logger.warning(f"⚠️ Failed to parse version_path {version_path}: {e}")
+        
+        # 🆕 根据分支获取该分支的 turns 列表
+        branch_turns = None
+        if target_branch and tree.get("branches"):
+            branch_info = tree["branches"].get(target_branch, {})
+            branch_turns = set(branch_info.get("turns", []))
+            
+            # 如果是子分支，需要包含父分支 fork_from_turn 之前的 turns
+            parent_branch = branch_info.get("parent_branch")
+            fork_from_turn = branch_info.get("fork_from_turn")
+            
+            if parent_branch and fork_from_turn:
+                # 获取父分支的 turns（只取 fork 点之前的）
+                parent_turns = tree["branches"].get(parent_branch, {}).get("turns", [])
+                for pt in parent_turns:
+                    if pt < fork_from_turn:
+                        branch_turns.add(pt)
+                # 同时包含 fork 点本身（但使用当前分支的版本）
+                branch_turns.add(fork_from_turn)
+            
+            logger.info(f"🌳 [History] Branch '{target_branch}' turns: {branch_turns}")
+        
         # 🆕 构建新格式的 chat_data（按 turn + user_message 分组，包含 answerList）
         # 格式: [{turn, user_message, action, answerList: [{version_id, assistant_message, feedback}], parent_version_id}, ...]
         chat_data = []
@@ -2958,12 +3018,31 @@ async def get_chat_history(
         
         for turn_key in sorted_turns:
             turn_num = int(turn_key)
+            
+            # 🆕 如果指定了分支，跳过不属于该分支的 turns
+            if branch_turns is not None and turn_num not in branch_turns:
+                logger.debug(f"🌳 [History] Skipping turn {turn_num} (not in branch_turns)")
+                continue
+            
             version_data = turn_versions[turn_key]
             versions = version_data["versions"]
             
+            # 🆕 如果指定了分支，过滤该 turn 的版本
+            filtered_versions = versions
+            if target_branch and tree.get("turns", {}).get(str(turn_num), {}).get("versions"):
+                turn_branch_versions = tree["turns"][str(turn_num)]["versions"]
+                # 只保留属于目标分支的版本
+                if target_branch in turn_branch_versions:
+                    # 找到该分支对应的 version_id
+                    branch_user_msg = turn_branch_versions[target_branch].get("user_message")
+                    if branch_user_msg:
+                        filtered_versions = [v for v in versions if v.get("user_message") == branch_user_msg]
+                        if not filtered_versions:
+                            filtered_versions = versions  # Fallback
+            
             # 按 user_message 分组（同一 turn 下可能有不同的问题版本，如 edit）
             message_groups = {}
-            for v in versions:
+            for v in filtered_versions:
                 msg = v.get("user_message", "")
                 if msg not in message_groups:
                     message_groups[msg] = {
@@ -2996,10 +3075,42 @@ async def get_chat_history(
                 parent_version_id = None
                 parent_version_path = None
                 if turn_num > 1:
-                    prev_turn = str(turn_num - 1)
-                    if prev_turn in last_version_by_turn:
-                        parent_version_id = last_version_by_turn[prev_turn]
-                        parent_version_path = f"{int(prev_turn)}:{parent_version_id}"  # 🆕 格式: "turn:version_id"
+                    # 🆕 从 tree.json 和分支信息中计算正确的 parent 关系
+                    if branch_turns:
+                        # 在当前分支中找上一个 turn
+                        prev_turns_in_branch = [t for t in branch_turns if t < turn_num]
+                        if prev_turns_in_branch:
+                            prev_turn = max(prev_turns_in_branch)
+                            
+                            # 确定上一个 turn 的版本 ID
+                            if target_branch and target_branch != "main":
+                                # 子分支：检查上一个 turn 是否属于当前分支或父分支
+                                branch_info = tree.get("branches", {}).get(target_branch, {})
+                                fork_from_turn = branch_info.get("fork_from_turn")
+                                
+                                if prev_turn == fork_from_turn:
+                                    # 上一个 turn 是 fork 点，使用当前分支的版本
+                                    prev_turn_versions = tree.get("turns", {}).get(str(prev_turn), {}).get("versions", {})
+                                    if target_branch in prev_turn_versions:
+                                        # 计算版本号（基于分支名称）
+                                        parent_version_id = int(target_branch.split("_v")[-1]) if "_v" in target_branch else 2
+                                    else:
+                                        parent_version_id = 1
+                                else:
+                                    # 上一个 turn 是分支独有的，版本 ID 为 1
+                                    parent_version_id = 1
+                            else:
+                                # main 分支：版本 ID 始终为 1
+                                parent_version_id = 1
+                            
+                            parent_version_path = f"{prev_turn}:{parent_version_id}"
+                    
+                    # Fallback: 使用简单的上一个 turn
+                    if not parent_version_path:
+                        prev_turn = str(turn_num - 1)
+                        if prev_turn in last_version_by_turn:
+                            parent_version_id = last_version_by_turn[prev_turn]
+                            parent_version_path = f"{int(prev_turn)}:{parent_version_id}"  # 🆕 格式: "turn:version_id"
                 
                 # 第一个版本的 version_path 作为这条记录的默认 path
                 first_version_path = f"{turn_num}:{group['first_version_id']}"
