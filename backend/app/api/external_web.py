@@ -3073,21 +3073,9 @@ async def get_chat_history(
                 "answer_id": answer_id,
                 "session_id": session_id,
                 "user_id": user_id,
-                # 🆕 新格式：按 turn + user_message 分组，包含 answerList
+                # 🆕 新格式：按 turn + user_message 分组，包含 answerList 和 version_path
                 "chat_data": chat_data,
-                "chat_data_total": len(chat_data),
-                # 🆕 当前版本路径的对话（每个 turn 一条，前端直接渲染）
-                "chat_list": current_chat_list,
-                "total": len(current_chat_list),
-                # 🆕 包含所有版本的完整列表（供版本切换使用）
-                "all_versions": all_versions_list,
-                "all_versions_total": len(all_versions_list),
-                # 🆕 每个 turn 的版本信息（告诉前端哪些 turn 有多个版本可切换）
-                "turn_versions": turn_versions if turn_versions else None,
-                # 🆕 版本树（id + pid 格式，前端追溯父子关系）
-                "version_tree": version_tree if version_tree else None,
-                # 🆕 当前选中的版本路径
-                "current_version_path": version_path or "default",
+                "total": len(chat_data),
                 "has_versions": len(turn_versions) > 0
             }
         }
