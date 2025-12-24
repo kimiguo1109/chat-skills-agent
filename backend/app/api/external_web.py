@@ -725,11 +725,8 @@ async def generate_sse_stream(
         logger.info(f"📚 Question context check: qid={qid}, token={'present' if token else 'missing'}, existing_context={'yes' if question_context else 'no'}")
         
         if not final_question_context and qid:
-            # 🆕 检查 qid 格式：StudyX API 需要 slug 格式（如 4merhtg），不能是纯数字
-            if qid.isdigit():
-                logger.warning(f"⚠️ qid '{qid}' is numeric format (question_id), not slug format. Skipping API call.")
-                logger.warning(f"💡 Frontend should pass slug format qid/resource_id (e.g., '4merhtg'), not question_id")
-            elif token:
+            # 🆕 API 支持两种格式：slug（如 4merhtg）和数字 ID（如 10040632384）
+            if token:
                 logger.info(f"📚 Fetching question context from StudyX (qid={qid}, env={environment})...")
                 final_question_context = await fetch_question_context_from_studyx(qid, token, environment)
                 if final_question_context:
@@ -3070,19 +3067,15 @@ async def generate_studyx_sse_stream(
             # 快捷问题需要题目上下文来理解 "this concept", "this problem" 等指代
             should_fetch_context = (existing_turns == 0) or action_type_hint
             
-            if should_fetch_context:
-                # 🆕 检查 qid 格式：StudyX API 需要 slug 格式（如 4merhtg），不能是纯数字
-                if qid and qid.isdigit():
-                    logger.warning(f"⚠️ [StudyX SSE] qid '{qid}' is numeric format (question_id), not slug format. Skipping API call.")
-                    logger.warning(f"💡 Frontend should pass slug format qid/resource_id (e.g., '4merhtg'), not question_id")
-                elif qid:
-                    logger.info(f"🆕 [StudyX SSE] Fetching question context (qid={qid}, action={action_type_hint}, turns={existing_turns}, env={environment})...")
-                    from app.api.external import fetch_question_context_from_studyx
-                    question_context = await fetch_question_context_from_studyx(qid, token, environment)
-                    if question_context:
-                        logger.info(f"✅ [StudyX SSE] Question context fetched: {len(question_context)} chars")
-                    else:
-                        logger.warning(f"⚠️ [StudyX SSE] Failed to fetch question context")
+            if should_fetch_context and qid:
+                # 🆕 API 支持两种格式：slug（如 4merhtg）和数字 ID（如 10040632384）
+                logger.info(f"🆕 [StudyX SSE] Fetching question context (qid={qid}, action={action_type_hint}, turns={existing_turns}, env={environment})...")
+                from app.api.external import fetch_question_context_from_studyx
+                question_context = await fetch_question_context_from_studyx(qid, token, environment)
+                if question_context:
+                    logger.info(f"✅ [StudyX SSE] Question context fetched: {len(question_context)} chars")
+                else:
+                    logger.warning(f"⚠️ [StudyX SSE] Failed to fetch question context")
         
         # 1. 调用完整的 Skill Pipeline
         result = await execute_skill_pipeline(

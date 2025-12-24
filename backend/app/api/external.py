@@ -2457,19 +2457,15 @@ async def chat(
                 question_context = request.question_context
                 logger.info(f"✅ Using question context from request: {len(question_context)} chars")
             # 方式 2: 通过 qid/resource_id 从 StudyX 获取
+            # 🆕 API 支持两种格式：slug（如 4merhtg）和数字 ID（如 10040632384）
             elif effective_qid and token:
-                # 🆕 检查 qid 格式：StudyX API 需要 slug 格式（如 4merhtg），不能是纯数字
-                if effective_qid.isdigit():
-                    logger.warning(f"⚠️ qid '{effective_qid}' is numeric format (question_id), not slug format. Skipping API call.")
-                    logger.warning(f"💡 Frontend should pass slug format qid/resource_id (e.g., '4merhtg'), not question_id")
+                reason = "new session" if is_new_session else f"quick action '{request.action_type}'"
+                logger.info(f"📡 Fetching question context ({reason}) from StudyX (qid={effective_qid}, env={env})...")
+                question_context = await fetch_question_context_from_studyx(effective_qid, token, env)
+                if question_context:
+                    logger.info(f"✅ Question context fetched: {len(question_context)} chars")
                 else:
-                    reason = "new session" if is_new_session else f"quick action '{request.action_type}'"
-                    logger.info(f"📡 Fetching question context ({reason}) from StudyX (qid={effective_qid}, env={env})...")
-                    question_context = await fetch_question_context_from_studyx(effective_qid, token, env)
-                    if question_context:
-                        logger.info(f"✅ Question context fetched: {len(question_context)} chars")
-                    else:
-                        logger.warning(f"⚠️ Failed to fetch question context for qid={effective_qid} (API permission issue?)")
+                    logger.warning(f"⚠️ Failed to fetch question context for qid={effective_qid}")
         else:
             logger.info(f"📂 Existing session without action_type, skipping question context fetch")
         
