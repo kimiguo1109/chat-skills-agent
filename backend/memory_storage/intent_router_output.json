@@ -1,10 +1,10 @@
 {
   "description": "Intent Router 实时输出记录 (Phase 3 架构)",
   "latest": {
-    "timestamp": "2025-12-24T01:30:43.265644",
-    "user_message": "Please help me analyze this image/file",
+    "timestamp": "2025-12-24T01:41:02.584807",
+    "user_message": "1+1+1=?",
     "method": "llm_fallback_gemini",
-    "tokens_used": 117,
+    "tokens_used": 109,
     "results": [
       {
         "intent": "other",
@@ -16,10 +16,24 @@
   },
   "history": [
     {
-      "timestamp": "2025-12-24T01:30:43.265644",
-      "user_message": "Please help me analyze this image/file",
+      "timestamp": "2025-12-24T01:41:01.026859",
+      "user_message": "1+1+1=?",
       "method": "llm_fallback_gemini",
-      "tokens_used": 117,
+      "tokens_used": 109,
+      "results": [
+        {
+          "intent": "other",
+          "topic": null,
+          "confidence": 0.7,
+          "parameters": {}
+        }
+      ]
+    },
+    {
+      "timestamp": "2025-12-24T01:41:02.584807",
+      "user_message": "1+1+1=?",
+      "method": "llm_fallback_gemini",
+      "tokens_used": 109,
       "results": [
         {
           "intent": "other",
@@ -31,9 +45,9 @@
     }
   ],
   "stats": {
-    "total_requests": 1,
+    "total_requests": 2,
     "rule_based_success": 0,
-    "llm_fallback": 1,
+    "llm_fallback": 2,
     "rule_success_rate": "0.0%"
   }
 }

@@ -911,19 +911,32 @@ async def generate_sse_stream(
                 logger.error(f"❌ Edit post-processing failed: {edit_err}", exc_info=True)
                 
         elif action == ActionType.REGENERATE and turn_id:
-            # Regenerate：新响应已追加为新 turn，记录到版本树
+            # 🆕 Regenerate：替换原 turn 的回答（不追加新 turn）
             try:
-                await _add_turn_to_branch(
+                # 1. 先替换原 turn 的回答（与 Edit 相同的方式）
+                success = await _replace_turn_response(
                     orchestrator.memory_manager,
                     user_id,
                     session_id,
-                    turn_id,  # 使用原始 turn_id（在新分支上覆盖）
-                    message,
+                    turn_id,
                     text
                 )
-                actual_turn_id = turn_id  # 返回 regenerate 的 turn ID
                 
-                # 🆕 更新 versions.json 中最新的 regenerate 版本，添加新回复
+                if success:
+                    actual_turn_id = turn_id
+                    logger.info(f"✅ Regenerate: turn {turn_id} response replaced")
+                    
+                    # 2. 删除刚追加的新 turn（因为我们已经替换了原 turn）
+                    await _delete_last_turn(
+                        orchestrator.memory_manager,
+                        user_id,
+                        session_id
+                    )
+                else:
+                    logger.warning(f"⚠️ Regenerate replacement failed, keeping new turn {new_turn_id}")
+                    actual_turn_id = new_turn_id
+                
+                # 3. 更新 versions.json
                 try:
                     from pathlib import Path
                     artifacts_dir = orchestrator.memory_manager.artifact_storage.base_dir / user_id
@@ -931,10 +944,10 @@ async def generate_sse_stream(
                     
                     if versions_file.exists():
                         versions = json.loads(versions_file.read_text(encoding='utf-8'))
-                        # 找到最新的 regenerate 版本（没有 new_response 的）
+                        # 找到最新的 regenerate 版本，添加新回复
                         for v in reversed(versions):
                             if v.get("turn_id") == turn_id and v.get("action") == "regenerate" and "new_response" not in v:
-                                v["new_response"] = text  # 保存新回复
+                                v["new_response"] = text
                                 logger.info(f"🌳 Updated regenerate version with new response")
                                 break
                         versions_file.write_text(json.dumps(versions, ensure_ascii=False, indent=2), encoding='utf-8')
