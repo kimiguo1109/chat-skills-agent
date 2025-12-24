@@ -255,7 +255,8 @@ async def fetch_question_context_from_studyx(qid: str, token: str, environment: 
         
         async with aiohttp.ClientSession() as session:
             headers = {"token": token}
-            params = {"id": qid, "type": "3", "routeType": "1"}
+            # 🆕 routeType=3 支持公开访问（不需要登录），routeType=1 需要登录权限
+            params = {"id": qid, "type": "3", "routeType": "3"}
             
             async with session.get(
                 api_url, 
