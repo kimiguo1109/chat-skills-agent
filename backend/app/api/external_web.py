@@ -57,6 +57,7 @@ from app.api.external import (
     get_skill_orchestrator,
     get_user_language_from_studyx,
     fetch_question_context_from_studyx,  # 🆕 获取题目上下文
+    get_question_context_error_hint,  # 🆕 获取友好错误提示
     _load_conversation_history,
     _save_chat_to_session,
     _convert_to_text_format,
@@ -728,11 +729,14 @@ async def generate_sse_stream(
             # 🆕 API 支持两种格式：slug（如 4merhtg）和数字 ID（如 10040632384）
             if token:
                 logger.info(f"📚 Fetching question context from StudyX (qid={qid}, env={environment})...")
-                final_question_context = await fetch_question_context_from_studyx(qid, token, environment)
+                final_question_context, error_type = await fetch_question_context_from_studyx(qid, token, environment)
                 if final_question_context:
                     logger.info(f"✅ Question context fetched: {len(final_question_context)} chars")
-                else:
-                    logger.warning(f"⚠️ Failed to fetch question context for qid={qid}")
+                elif error_type:
+                    # 🆕 获取失败时，添加友好的错误提示到上下文
+                    error_hint = get_question_context_error_hint(error_type, language)
+                    final_question_context = error_hint
+                    logger.warning(f"⚠️ Failed to fetch question context for qid={qid}, error_type={error_type}")
             else:
                 logger.warning(f"⚠️ Cannot fetch question context: token is missing (qid={qid})")
         
@@ -3070,12 +3074,15 @@ async def generate_studyx_sse_stream(
             if should_fetch_context and qid:
                 # 🆕 API 支持两种格式：slug（如 4merhtg）和数字 ID（如 10040632384）
                 logger.info(f"🆕 [StudyX SSE] Fetching question context (qid={qid}, action={action_type_hint}, turns={existing_turns}, env={environment})...")
-                from app.api.external import fetch_question_context_from_studyx
-                question_context = await fetch_question_context_from_studyx(qid, token, environment)
+                from app.api.external import fetch_question_context_from_studyx, get_question_context_error_hint
+                question_context, error_type = await fetch_question_context_from_studyx(qid, token, environment)
                 if question_context:
                     logger.info(f"✅ [StudyX SSE] Question context fetched: {len(question_context)} chars")
-                else:
-                    logger.warning(f"⚠️ [StudyX SSE] Failed to fetch question context")
+                elif error_type:
+                    # 🆕 获取失败时，添加友好的错误提示到上下文
+                    error_hint = get_question_context_error_hint(error_type, language)
+                    question_context = error_hint
+                    logger.warning(f"⚠️ [StudyX SSE] Failed to fetch question context, error_type={error_type}")
         
         # 1. 调用完整的 Skill Pipeline
         result = await execute_skill_pipeline(

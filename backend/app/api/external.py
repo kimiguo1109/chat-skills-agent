@@ -228,25 +228,28 @@ async def get_user_language_from_studyx(token: str, environment: str = "test") -
 STUDYX_QUESTION_INFO_API = "https://test.istudyx.com/api/studyx/v5/cloud/ai/newQueryQuestionInfo"
 
 
-async def fetch_question_context_from_studyx(qid: str, token: str, environment: str = "test") -> Optional[str]:
+async def fetch_question_context_from_studyx(qid: str, token: str, environment: str = "test") -> tuple[Optional[str], Optional[str]]:
     """
     从 StudyX API 获取题目上下文
     
     Args:
-        qid: 题目 slug (如 96rhhg4)
+        qid: 题目 slug (如 96rhhg4) 或数字 ID (如 10040632384)
         token: 用户登录 token
         environment: 环境标识 (dev/test/prod)
     
     Returns:
-        str: 题目上下文文本，格式为:
-            Question: <题目内容>
-            Answer: <答案内容>
-            
-        如果获取失败返回 None
+        tuple: (context, error_type)
+            - context: 题目上下文文本，格式为 Question: + Answer:
+            - error_type: 错误类型，None 表示成功，可能的值：
+                - "not_found": 题目不存在或已删除 (410 Gone)
+                - "permission": 无权限访问 (302)
+                - "empty": 题目内容为空
+                - "timeout": 请求超时
+                - "error": 其他错误
     """
     if not qid or not token:
         logger.warning(f"⚠️ Missing qid or token for question context fetch")
-        return None
+        return None, "error"
     
     try:
         # 🆕 根据 environment 选择 API 地址
@@ -266,8 +269,12 @@ async def fetch_question_context_from_studyx(qid: str, token: str, environment: 
             ) as response:
                 if response.status == 200:
                     data = await response.json()
-                    logger.info(f"📡 StudyX question API response: code={data.get('code')}, msg={data.get('msg')}")
-                    if data.get("code") == 0 and data.get("data"):
+                    api_code = data.get("code")
+                    api_msg = data.get("msg", "")
+                    logger.info(f"📡 StudyX question API response: code={api_code}, msg={api_msg}")
+                    
+                    # 🆕 处理不同的 API 响应码
+                    if api_code == 0 and data.get("data"):
                         qnt_info = data["data"].get("qntInfo", {})
                         
                         # 提取题目文本（优先使用 questionText，其次 imgText）
@@ -293,19 +300,74 @@ async def fetch_question_context_from_studyx(qid: str, token: str, environment: 
                             
                             context = "\n\n".join(context_parts)
                             logger.info(f"✅ Fetched question context: qid={qid}, len={len(context)}")
-                            return context
+                            return context, None  # 成功
                         else:
                             logger.warning(f"⚠️ Empty question context for qid={qid}")
+                            return None, "empty"
+                    
+                    # 🆕 处理 API 错误码
+                    elif api_code == 410:
+                        logger.warning(f"⚠️ Question not found or deleted: qid={qid} (410 Gone)")
+                        return None, "not_found"
+                    elif api_code == 302:
+                        logger.warning(f"⚠️ No permission to access question: qid={qid} (302)")
+                        return None, "permission"
                     else:
-                        logger.warning(f"⚠️ StudyX question API error: {data.get('msg')}")
+                        logger.warning(f"⚠️ StudyX question API error: code={api_code}, msg={api_msg}")
+                        return None, "error"
                 else:
                     logger.warning(f"⚠️ StudyX question API HTTP error: {response.status}")
+                    return None, "error"
+                    
     except asyncio.TimeoutError:
         logger.warning(f"⚠️ StudyX question API timeout for qid={qid}")
+        return None, "timeout"
     except Exception as e:
         logger.warning(f"⚠️ Failed to fetch question context: {e}")
+        return None, "error"
     
-    return None
+    return None, "error"
+
+
+# 🆕 根据错误类型生成友好的提示信息
+def get_question_context_error_hint(error_type: str, language: str = "en") -> str:
+    """
+    根据错误类型生成友好的提示信息
+    
+    Args:
+        error_type: 错误类型
+        language: 语言 (en/zh 等)
+    
+    Returns:
+        str: 友好的提示信息
+    """
+    hints = {
+        "not_found": {
+            "en": "[Note: The question you're referring to could not be found. It may have been deleted or is no longer available. Please describe your question directly, and I'll be happy to help!]",
+            "zh": "[提示：未能找到您引用的题目，该题目可能已被删除或暂时无法访问。请直接描述您的问题，我很乐意帮助您！]",
+        },
+        "permission": {
+            "en": "[Note: Unable to access the question due to permission restrictions. Please describe your question directly.]",
+            "zh": "[提示：由于权限限制，无法访问该题目。请直接描述您的问题。]",
+        },
+        "empty": {
+            "en": "[Note: The question content appears to be empty. Please describe your question directly.]",
+            "zh": "[提示：题目内容为空。请直接描述您的问题。]",
+        },
+        "timeout": {
+            "en": "[Note: Request timed out while fetching the question. Please try again or describe your question directly.]",
+            "zh": "[提示：获取题目信息超时。请重试或直接描述您的问题。]",
+        },
+        "error": {
+            "en": "[Note: Unable to retrieve the question information. Please describe your question directly.]",
+            "zh": "[提示：无法获取题目信息。请直接描述您的问题。]",
+        },
+    }
+    
+    # 确定语言（简化处理）
+    lang_key = "zh" if language and language.lower().startswith("zh") else "en"
+    
+    return hints.get(error_type, hints["error"]).get(lang_key, hints["error"]["en"])
 
 
 router = APIRouter(prefix="/api/external", tags=["external"])
@@ -2462,11 +2524,14 @@ async def chat(
             elif effective_qid and token:
                 reason = "new session" if is_new_session else f"quick action '{request.action_type}'"
                 logger.info(f"📡 Fetching question context ({reason}) from StudyX (qid={effective_qid}, env={env})...")
-                question_context = await fetch_question_context_from_studyx(effective_qid, token, env)
+                question_context, error_type = await fetch_question_context_from_studyx(effective_qid, token, env)
                 if question_context:
                     logger.info(f"✅ Question context fetched: {len(question_context)} chars")
-                else:
-                    logger.warning(f"⚠️ Failed to fetch question context for qid={effective_qid}")
+                elif error_type:
+                    # 🆕 获取失败时，添加友好的错误提示到上下文
+                    error_hint = get_question_context_error_hint(error_type, language)
+                    question_context = error_hint
+                    logger.warning(f"⚠️ Failed to fetch question context for qid={effective_qid}, error_type={error_type}")
         else:
             logger.info(f"📂 Existing session without action_type, skipping question context fetch")
         
