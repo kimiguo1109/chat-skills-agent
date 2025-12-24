@@ -1,31 +1,35 @@
 {
   "description": "Intent Router 实时输出记录 (Phase 3 架构)",
   "latest": {
-    "timestamp": "2025-12-24T08:54:41.915491",
-    "user_message": "точный кыскаша шешу",
-    "method": "llm_fallback_gemini",
-    "tokens_used": 113,
+    "timestamp": "2025-12-24T09:01:11.762682",
+    "user_message": "What's the main concept being tested here?",
+    "method": "skill_registry",
+    "tokens_used": 0,
     "results": [
       {
-        "intent": "explain",
-        "topic": null,
-        "confidence": 0.85,
-        "parameters": {}
+        "intent": "quiz_request",
+        "topic": "Basic Math Concepts",
+        "confidence": 0.9500000000000001,
+        "parameters": {
+          "topic": "Basic Math Concepts"
+        }
       }
     ]
   },
   "history": [
     {
-      "timestamp": "2025-12-24T08:54:41.915491",
-      "user_message": "точный кыскаша шешу",
-      "method": "llm_fallback_gemini",
-      "tokens_used": 113,
+      "timestamp": "2025-12-24T09:01:11.762682",
+      "user_message": "What's the main concept being tested here?",
+      "method": "skill_registry",
+      "tokens_used": 0,
       "results": [
         {
-          "intent": "explain",
-          "topic": null,
-          "confidence": 0.85,
-          "parameters": {}
+          "intent": "quiz_request",
+          "topic": "Basic Math Concepts",
+          "confidence": 0.9500000000000001,
+          "parameters": {
+            "topic": "Basic Math Concepts"
+          }
         }
       ]
     }
@@ -33,7 +37,7 @@
   "stats": {
     "total_requests": 1,
     "rule_based_success": 0,
-    "llm_fallback": 1,
+    "llm_fallback": 0,
     "rule_success_rate": "0.0%"
   }
 }
