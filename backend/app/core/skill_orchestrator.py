@@ -116,7 +116,7 @@ class SkillOrchestrator:
                             "type": "done",
                             "content_type": "clarification_needed",
                             "content": {
-                                "question": "您想基于以下哪个主题继续？",
+                                "question": "Which topic would you like to continue with?",
                                 "reason": "topic_missing",
                                 "options": [
                                     {
@@ -164,8 +164,10 @@ class SkillOrchestrator:
             
             # 🆕 处理 'other' intent（普通对话）
             if intent_result.intent == "other":
-                logger.info(f"💬 Handling 'other' intent as chat conversation")
-                async for chunk in self._handle_chat_stream(intent_result, user_id, session_id):
+                # 🔥 从 additional_params 提取语言设置
+                language = additional_params.get("language", "auto") if additional_params else "auto"
+                logger.info(f"💬 Handling 'other' intent as chat conversation (language={language})")
+                async for chunk in self._handle_chat_stream(intent_result, user_id, session_id, language=language):
                     yield chunk
                 return
             
@@ -325,7 +327,7 @@ class SkillOrchestrator:
                             "type": "done",
                             "content_type": "clarification_needed",
                             "content": {
-                                "question": f"您想基于哪个主题继续？",
+                                "question": "Which topic would you like to continue with?",
                                 "reason": "topic_ambiguous",
                                 "options": [
                                     {
@@ -390,7 +392,7 @@ class SkillOrchestrator:
                 logger.info(f"🌐 Using External API for flashcard_skill")
                 yield {
                     "type": "status",
-                    "message": "🌐 正在调用外部服务生成闪卡..."
+                    "message": "🌐 Generating flashcards via external service..."
                 }
                 
                 try:
@@ -469,7 +471,7 @@ class SkillOrchestrator:
                     logger.error(f"❌ External flashcard API failed: {e}, falling back to LLM")
                     yield {
                         "type": "status",
-                        "message": f"⚠️ 外部服务异常，使用 AI 生成..."
+                        "message": f"⚠️ External service error, using AI to generate..."
                     }
                     # 继续执行 LLM 流程作为 fallback
             
@@ -478,7 +480,7 @@ class SkillOrchestrator:
                 logger.info(f"🌐 Using External API for quiz_skill")
                 yield {
                     "type": "status",
-                    "message": "🌐 正在调用外部服务生成测验..."
+                    "message": "🌐 Generating quiz via external service..."
                 }
                 
                 try:
@@ -557,14 +559,14 @@ class SkillOrchestrator:
                     logger.error(f"❌ External quiz API failed: {e}, falling back to LLM")
                     yield {
                         "type": "status",
-                        "message": f"⚠️ 外部服务异常，使用 AI 生成..."
+                        "message": f"⚠️ External service error, using AI to generate..."
                     }
                     # 继续执行 LLM 流程作为 fallback
             
             # Step 5: 流式调用 LLM
             yield {
                 "type": "status", 
-                "message": "正在生成内容..."
+                "message": "Generating content..."
             }
             
             thinking_accumulated = []
@@ -581,7 +583,7 @@ class SkillOrchestrator:
                     if retry_count > 0:
                         yield {
                             "type": "status",
-                            "message": f"连接中断，正在重试 ({retry_count}/{max_retries})..."
+                            "message": f"Connection interrupted, retrying ({retry_count}/{max_retries})..."
                         }
                         logger.warning(f"🔄 Retrying API call (attempt {retry_count}/{max_retries})")
                     
@@ -1601,7 +1603,8 @@ class SkillOrchestrator:
         self,
         intent_result: IntentResult,
         user_id: str,
-        session_id: str
+        session_id: str,
+        language: str = "auto"
     ):
         """
         🆕 处理普通对话的流式响应（intent=other）
@@ -1610,11 +1613,12 @@ class SkillOrchestrator:
             intent_result: 意图识别结果
             user_id: 用户 ID
             session_id: 会话 ID
+            language: 语言设置（auto=自动检测，en=英语，zh=中文等）
             
         Yields:
             流式响应事件
         """
-        logger.info(f"💬 Starting chat stream for user {user_id}")
+        logger.info(f"💬 Starting chat stream for user {user_id}, language={language}")
         
         # 加载对话历史（简化版，直接获取最近的 turns 文本）
         session_mgr = self.memory_manager.get_conversation_session_manager(user_id)
@@ -1628,22 +1632,70 @@ class SkillOrchestrator:
             logger.warning(f"⚠️ Failed to load conversation history: {e}")
         
         # 构建 prompt（将 system instruction 和对话历史合并到 prompt）
-        system_prompt = """你是一个友好的学习助手。请用简洁清晰的语言回答用户的问题。
-如果用户问的是学习相关的问题，提供有帮助的信息。
-如果用户只是打招呼或闲聊，友好地回应并引导他们开始学习。
-回复使用中文。"""
+        # 🔥 根据 language 参数构建语言指令
+        if language == 'auto' or not language:
+            language_instruction = """
+## ⚠️ LANGUAGE REQUIREMENT (CRITICAL)
+You MUST respond in the **SAME LANGUAGE** as the user's message:
+- If user writes in Chinese (中文), respond entirely in Chinese
+- If user writes in English, respond entirely in English
+- If user writes in Japanese (日本語), respond entirely in Japanese
+- Match the user's language exactly! This is mandatory."""
+        else:
+            # 语言代码到语言名称的映射
+            LANG_NAMES = {
+                "en": "English", "zh": "Chinese (中文)", "zh-CN": "Chinese (中文)",
+                "zh-TW": "Traditional Chinese (繁體中文)", "ja": "Japanese (日本語)",
+                "ko": "Korean (한국어)", "fr": "French", "es": "Spanish", "de": "German",
+                "it": "Italian", "ru": "Russian", "vi": "Vietnamese", "th": "Thai",
+                "hi": "Hindi", "id": "Indonesian", "ms": "Malay", "tr": "Turkish",
+                "pl": "Polish", "nl": "Dutch", "ro": "Romanian", "cs": "Czech",
+                "sk": "Slovak", "hu": "Hungarian", "tl": "Filipino", "no": "Norwegian",
+                "da": "Danish", "fi": "Finnish", "pt": "Portuguese"
+            }
+            target_lang = LANG_NAMES.get(language, language)
+            language_instruction = f"""
+## ⚠️ LANGUAGE REQUIREMENT (CRITICAL)
+You MUST respond in **{target_lang}** only. All text in your response must be in {target_lang}. This is mandatory."""
+        
+        system_prompt = f"""You are a helpful learning assistant. Adapt your response based on the question complexity:
+{language_instruction}
+
+## Response Guidelines:
+
+### For SIMPLE questions (calculations, yes/no, factual lookups):
+- Give a direct, concise answer (1-3 sentences)
+- Examples: "1+1=?", "What is 5*3?", "Is water H2O?"
+- Response: Just the answer, maybe one brief explanation
+
+### For MODERATE questions (concept questions, "what is X", "how does Y work"):
+- Provide a clear explanation (2-4 paragraphs)
+- Include: definition, key points, maybe one example
+- Examples: "What's the main concept here?", "How does photosynthesis work?"
+
+### For COMPLEX questions (analysis, comparison, "why", deep understanding):
+- Give a thorough, structured response
+- Include: explanation, examples, comparisons, implications
+- Use markdown formatting (headers, bullet points) for clarity
+- Examples: "Compare X and Y", "Why is this important?", "Analyze this problem"
+
+## Important Rules:
+1. Match response length to question complexity - don't over-explain simple things
+2. If context is provided, reference it in your answer
+3. Be friendly but focused on helping the user learn"""
         
         # 构建完整的 prompt（包含历史）
+        # 🔥 使用英文标签，避免影响模型的语言选择
         full_prompt = f"{system_prompt}\n\n"
         if conversation_context:
-            full_prompt += f"对话历史：\n{conversation_context}\n\n"
-        full_prompt += f"用户: {intent_result.raw_text}\n助手:"
+            full_prompt += f"Previous conversation:\n{conversation_context}\n\n"
+        full_prompt += f"User: {intent_result.raw_text}\nAssistant:"
         
         # 使用 Gemini 生成响应
         full_response = ""
         
         try:
-            yield {"type": "status", "message": "正在思考..."}
+            yield {"type": "status", "message": "Thinking..."}
             
             async for chunk in self.gemini_client.generate_stream(
                 prompt=full_prompt,
@@ -3111,7 +3163,7 @@ class SkillOrchestrator:
         
         # 根据思考模式选择提示语
         if thinking_mode == "real_thinking":
-            message = "🧠 深度分析中，基于以下上下文..."
+            message = "🧠 Deep analysis in progress, based on the following context..."
         else:
             message = "⚡ 快速生成中，基于以下上下文..."
         
@@ -3222,7 +3274,20 @@ class SkillOrchestrator:
         
         # 🆕 添加语言指令（如果有 language 参数）
         language = params.get('language', 'auto')
-        if language and language != 'auto':
+        if language == 'auto' or not language:
+            # 🔥 自动检测：从用户消息语言推断
+            formatted += """
+
+## ⚠️ LANGUAGE REQUIREMENT
+
+**CRITICAL**: You MUST respond in the **SAME LANGUAGE** as the user's message. 
+- If user writes in Chinese (中文), respond in Chinese.
+- If user writes in English, respond in English.
+- If user writes in Japanese (日本語), respond in Japanese.
+- Match the user's language exactly!
+"""
+            logger.info(f"🌐 Added auto-detect language instruction")
+        else:
             # 语言代码到语言名称的映射
             LANGUAGE_NAMES = {
                 "en": "English",

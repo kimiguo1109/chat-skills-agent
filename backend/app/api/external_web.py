@@ -63,6 +63,7 @@ from app.api.external import (
     _convert_to_text_format,
 )
 
+
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/external/chat/web", tags=["external-web"])
@@ -441,7 +442,9 @@ async def _add_turn_to_branch(
     session_id: str,
     turn_id: int,
     user_message: str,
-    response: str
+    response: str,
+    parent_version_path: Optional[str] = None,  # 🆕 用户发送消息时所在的版本路径
+    files: Optional[List[Dict]] = None  # 🆕 附件文件信息
 ) -> bool:
     """将新 turn 添加到当前活动分支"""
     tree = await _load_version_tree(memory_manager, user_id, session_id)
@@ -469,8 +472,15 @@ async def _add_turn_to_branch(
         "timestamp": datetime.now().isoformat(),
         "user_message": user_message,
         "response_preview": response[:100] if response else "",
-        "status": "active"
+        "status": "active",
+        "parent_version_path": parent_version_path,  # 🆕 存储父版本路径
+        "files": files  # 🆕 存储附件文件信息
     }
+    
+    # 🆕 如果提供了 parent_version_path，也记录在 turns 元数据中
+    if parent_version_path:
+        tree["turns"][turn_key]["parent_version_path"] = parent_version_path
+        logger.info(f"🌳 Stored parent_version_path={parent_version_path} for turn {turn_id}")
     
     await _save_version_tree(memory_manager, user_id, session_id, tree)
     return True
@@ -541,10 +551,16 @@ class WebChatRequest(BaseModel):
     # 🌳 版本路径（用于在特定版本下继续对话）
     version_path: Optional[str] = Field(None, description="版本路径，格式: 'turn_id:version_id'，如 '1:2' 表示在 Turn 1 的 version 2 下继续对话")
     
-    # 通用参数（与 App 端一致）
-    file_uri: Optional[str] = Field(None, description="单个 GCS 文件 URI")
-    file_uris: Optional[List[str]] = Field(None, description="多个 GCS 文件 URI")
-    files: Optional[List[FileInfo]] = Field(None, description="文件信息数组")
+    # 🆕 Web 端文件上传（对象数组，URL 和 name 显式绑定）
+    file_urls: Optional[List[Dict[str, str]]] = Field(
+        None, 
+        description="文件数组，每个对象包含 url 和 name。示例: [{'url': 'https://...', 'name': '作业.png'}]"
+    )
+    
+    # 通用参数（与 App 端一致，保留向后兼容）
+    file_uri: Optional[str] = Field(None, description="[兼容] 单个 GCS 文件 URI")
+    file_uris: Optional[List[str]] = Field(None, description="[兼容] 多个 GCS 文件 URI")
+    files: Optional[List[FileInfo]] = Field(None, description="[兼容] 文件信息数组")
     referenced_text: Optional[str] = Field(None, description="引用的文本内容")
     action_type: Optional[str] = Field(None, description="快捷操作: explain_concept, make_simpler, common_mistakes")
     language: Optional[str] = Field(None, description="回复语言")
@@ -598,7 +614,9 @@ async def generate_sse_stream(
     token: Optional[str] = None,
     environment: str = "test",  # 🆕 环境标识
     # 🌳 版本路径（用于在特定版本下继续对话）
-    version_path: Optional[str] = None
+    version_path: Optional[str] = None,
+    # 🆕 显示消息（用于历史记录，保持原始按钮文本）
+    display_message: Optional[str] = None
 ) -> AsyncGenerator[str, None]:
     """
     生成 SSE 事件流（使用完整的 Skill Pipeline）
@@ -755,21 +773,38 @@ async def generate_sse_stream(
         # 🆕 发送 thinking 状态，让客户端知道正在处理
         yield f"data: {json.dumps({'type': 'thinking', 'message': 'Processing your request...'})}\n\n"
         
-        # 3. 🔥 调用完整的 Skill Pipeline（与 App 端一致）
-        result = await execute_skill_pipeline(
+        # 3. 🔥 调用 Skill Pipeline
+        # 🆕 暂时强制 skill_hint='chat' 让意图识别为 'other'，禁用其他 Skills
+        # 后续需要开启 Skills 时，移除 skill_hint='chat' 即可
+        logger.info(f"💬 [Web] Using skill_hint='chat' to force 'other' intent (Skills disabled)")
+        
+        pipeline_task = asyncio.create_task(execute_skill_pipeline(
             message=message,
             user_id=user_id,
             session_id=session_id,
             orchestrator=orchestrator,
             quantity_override=None,
-            skill_hint=None,
+            skill_hint="chat",  # 🔥 强制使用 chat 模式，意图识别为 'other'
             file_uris=file_uris,
             referenced_text=referenced_text,
             action_type=action_type_hint,
             files=files,
             language=language,
-            question_context=final_question_context  # 🆕 传递题目上下文
-        )
+            question_context=final_question_context,
+            display_message=display_message
+        ))
+        
+        # 🆕 发送 keepalive 心跳，防止连接超时（每 2 秒发送一次）
+        keepalive_count = 0
+        while not pipeline_task.done():
+            await asyncio.sleep(2.0)  # 每 2 秒检查一次
+            if not pipeline_task.done():
+                keepalive_count += 1
+                yield f"data: {json.dumps({'type': 'keepalive', 'count': keepalive_count})}\n\n"
+                logger.debug(f"📡 SSE keepalive #{keepalive_count} sent")
+        
+        # 获取结果
+        result = await pipeline_task
         
         # 4. 发送意图识别结果
         intent = result.get("intent", "other")
@@ -787,7 +822,26 @@ async def generate_sse_stream(
             if "text" in content:
                 # 普通 chat 响应
                 text = content.get("text", "")
-            elif "intuition" in content:
+            elif content.get("type") == "calculation":
+                # 🆕 explain_skill 计算类型响应：直接返回计算结果
+                expression = content.get("expression", "")
+                answer = content.get("answer", "")
+                text_result = content.get("text", f"The result of {expression} is {answer}.")
+                
+                # 如果有步骤，也显示步骤
+                steps = content.get("steps", [])
+                if steps:
+                    step_texts = []
+                    for s in steps:
+                        if isinstance(s, dict):
+                            step_texts.append(f"Step {s.get('step', '')}: {s.get('operation', '')}")
+                    if step_texts:
+                        text = f"{text_result}\n\n**Steps:**\n" + "\n".join(step_texts)
+                    else:
+                        text = text_result
+                else:
+                    text = text_result
+            elif "intuition" in content or content.get("type") == "concept":
                 # explain_skill 响应：组合多个字段为完整文本
                 parts = []
                 if content.get("concept"):
@@ -853,31 +907,16 @@ async def generate_sse_stream(
         else:
             text = str(content) if content else ""
         
-        # 流式发送内容（分块）- 优化分块策略
+        # 🎯 流式发送内容（打字机效果）
         if text:
-            # 🆕 智能分块：按句子或段落分割，而不是固定字符数
-            # 优先按换行分割，然后按句子分割
-            chunks = []
-            for para in text.split('\n'):
-                if para.strip():
-                    # 如果段落太长，按句子分割
-                    if len(para) > 150:
-                        # 按句子分割（支持中英文标点）
-                        sentences = re.split(r'(?<=[。！？.!?])\s*', para)
-                        chunks.extend([s for s in sentences if s.strip()])
-                    else:
-                        chunks.append(para)
-                else:
-                    chunks.append('')  # 保留空行
+            # 🆕 始终使用小字符块实现打字机效果
+            chunk_size = 8  # 每次发送 8 个字符（更流畅的打字效果）
+            typing_delay = 0.035  # 35ms 延迟（类似真人打字速度）
             
-            # 如果分块后太少，使用固定大小分块
-            if len(chunks) <= 2 and len(text) > 100:
-                chunk_size = 30  # 更小的块，更流畅
-                chunks = [text[i:i+chunk_size] for i in range(0, len(text), chunk_size)]
-            
-            for chunk in chunks:
+            for i in range(0, len(text), chunk_size):
+                chunk = text[i:i+chunk_size]
                 yield f"data: {json.dumps({'type': 'chunk', 'content': chunk})}\n\n"
-                await asyncio.sleep(0.005)  # 更快的发送间隔
+                await asyncio.sleep(typing_delay)
         else:
             # 🆕 即使没有文本，也发送一个空 chunk 表示处理完成
             yield f"data: {json.dumps({'type': 'chunk', 'content': '处理完成'})}\n\n"
@@ -973,13 +1012,17 @@ async def generate_sse_stream(
         else:
             # 普通 send：记录新 turn 到版本树
             try:
+                # 🔥 使用 display_message（原始按钮文本）而不是 message（转换后的提示）
+                history_message = display_message if display_message else message
                 await _add_turn_to_branch(
                     orchestrator.memory_manager,
                     user_id,
                     session_id,
                     new_turn_id,
-                    message,
-                    text
+                    history_message,  # 保存原始用户消息
+                    text,
+                    parent_version_path=version_path,  # 🆕 传递用户当前所在的版本路径作为父版本
+                    files=files  # 🆕 传递附件文件信息
                 )
             except Exception as tree_err:
                 logger.warning(f"⚠️ Failed to update version tree: {tree_err}")
@@ -1003,6 +1046,10 @@ async def generate_sse_stream(
             'action': action.value,
             'branch': active_branch  # 🌳 当前活动分支
         }
+        
+        # 🆕 如果有文件上传，返回文件信息（包含 name）
+        if files:
+            done_data['files'] = files
         
         # 如果是 regenerate，标记新分支创建
         if action == ActionType.REGENERATE:
@@ -1807,9 +1854,15 @@ async def web_chat_stream(
     - edit: 编辑某轮并重新生成
     - regenerate: 重新生成某轮回复
     """
+    # 🆕 环境标识（在 token 处理前获取）
+    env = environment or "test"
+    
     # 设置 token
     if token:
         set_user_api_token(token)
+        logger.info(f"🔑 [Web] User token set from headers")
+    else:
+        logger.info(f"⚠️ [Web] No token in headers, language fetch will be skipped")
     
     try:
         # 构建 session_id（使用数字格式的 question_id）
@@ -1820,8 +1873,19 @@ async def web_chat_stream(
         # - resource_id / qid（slug 格式，如 96rhh58）：用于获取题目上下文
         # StudyX 的 newQueryQuestionInfo API 需要 slug 格式的 ID
         effective_qid_for_context = request.resource_id or request.qid  # 优先使用 slug 格式
-        logger.info(f"   • Question ID: {request.question_id}, QID: {request.qid}, Resource ID: {request.resource_id}")
-        logger.info(f"   • QID for context: {effective_qid_for_context or 'N/A (will skip context fetch)'}")
+        
+        # 🆕 获取语言设置（提前到日志记录之前，方便排查）
+        language = request.language
+        logger.info(f"🌐 [Web] Language from request: {language or 'N/A'}")
+        
+        if not language and token:
+            logger.info(f"🌐 [Web] Fetching language from StudyX API...")
+            language = await get_user_language_from_studyx(token, env)
+            logger.info(f"🌐 [Web] Language from StudyX: {language or 'N/A'}")
+        elif not language:
+            logger.info(f"⚠️ [Web] No language and no token, using default: en")
+        
+        language = language or "en"
         
         # 日志记录
         logger.info("="*60)
@@ -1829,36 +1893,85 @@ async def web_chat_stream(
         logger.info(f"   • User: {request.user_id}")
         logger.info(f"   • Session: {session_id}")
         logger.info(f"   • Action: {request.action}")
-        logger.info(f"   • Action Type: {request.action_type or 'N/A'}")  # 🆕 记录 action_type
-        logger.info(f"   • Turn ID: {request.turn_id}")  # 🆕 记录 turn_id (edit/regenerate 时重要)
+        logger.info(f"   • Action Type: {request.action_type or 'N/A'}")
+        logger.info(f"   • Turn ID: {request.turn_id}")
         logger.info(f"   • Message: {request.message[:50] if request.message else 'N/A'}...")
         logger.info(f"   • QID/Resource ID: {effective_qid_for_context or 'N/A'}")
+        logger.info(f"   • Environment: {env}")
+        logger.info(f"   • Language: {language}")
+        logger.info(f"   • Token: {'present' if token else 'missing'}")
         logger.info("="*60)
         
-        # 🆕 环境标识
-        env = environment or "test"
-        logger.info(f"   • Environment: {env}")
+        # 🆕 合并所有文件来源
+        # 优先级: file_urls (对象数组) > file_uris (GCS) > file_uri (单个)
+        all_file_urls = []
+        file_name_map = {}  # URL -> 原始文件名映射
         
-        # 获取语言设置
-        language = request.language
-        if not language and token:
-            language = await get_user_language_from_studyx(token, env)
-        language = language or "en"
+        # 1. 🆕 file_urls 字段（对象数组，URL 和 name 显式绑定）
+        if request.file_urls:
+            for item in request.file_urls:
+                url = item.get("url") if isinstance(item, dict) else item
+                name = item.get("name") if isinstance(item, dict) else None
+                if url:
+                    all_file_urls.append(url)
+                    if name:
+                        file_name_map[url] = name
+            logger.info(f"   • 📎 File URLs: {len(request.file_urls)} files")
         
-        logger.info(f"   • Language: {language}")
-        
-        # 合并 file_uris
-        file_uris = []
-        if request.file_uri:
-            file_uris.append(request.file_uri)
+        # 2. 兼容旧的 file_uris 字段（GCS URI）
         if request.file_uris:
-            file_uris.extend(request.file_uris)
+            all_file_urls.extend(request.file_uris)
+            logger.info(f"   • 📎 File URIs (legacy): {len(request.file_uris)} files")
+        
+        # 3. 兼容单个 file_uri
+        if request.file_uri:
+            all_file_urls.append(request.file_uri)
+            logger.info(f"   • 📎 File URI (legacy single): 1 file")
         
         # 🆕 检查是否有文件上传
-        has_files = bool(file_uris or request.files)
+        has_files = bool(all_file_urls or request.files)
+        
+        if all_file_urls:
+            logger.info(f"   • 📎 Total files: {len(all_file_urls)}")
+            for i, url in enumerate(all_file_urls[:3]):  # 只显示前3个
+                name = file_name_map.get(url, "")
+                logger.info(f"      - [{i+1}] {name or url[:60]}...")
         
         # 🆕 同步 App 端逻辑：处理消息
         message = request.message.strip() if request.message else ""
+        
+        # 🔥 兼容前端：自动检测按钮文本并转换为 action_type
+        # 前端可能发送按钮文本而不是 action_type，需要自动识别
+        button_text_to_action = {
+            # 英文按钮
+            "💡 Explain the concept": "explain_concept",
+            "Explain the concept": "explain_concept",
+            "✨ Make it simpler": "make_simpler",
+            "Make it simpler": "make_simpler",
+            "⚠️ Common mistakes": "common_mistakes",
+            "Common mistakes": "common_mistakes",
+            "📝 Step by step": "step_by_step",
+            "Step by step": "step_by_step",
+            # 中文按钮
+            "💡 解释概念": "explain_concept",
+            "解释概念": "explain_concept",
+            "✨ 简化解释": "make_simpler",
+            "简化解释": "make_simpler",
+            "⚠️ 常见错误": "common_mistakes",
+            "常见错误": "common_mistakes",
+            "📝 分步解析": "step_by_step",
+            "分步解析": "step_by_step",
+        }
+        
+        # 🆕 保存原始用户消息（用于历史记录显示）
+        display_message = message  # 保持原始按钮文本，如 "💡 Explain the concept"
+        
+        detected_action_type = button_text_to_action.get(message)
+        if detected_action_type and not request.action_type:
+            logger.info(f"🔄 [Web] Auto-detected button text '{message}' → action_type: {detected_action_type}")
+            request.action_type = detected_action_type
+            # 🔥 不清空 display_message - 保持原始按钮文本用于历史记录
+            message = ""  # 清空 message，让后续逻辑使用 action_type 生成合适的提示
         
         # 🆕 警告：没有消息也没有 action_type
         if not message and not request.action_type and not has_files:
@@ -1918,10 +2031,33 @@ async def web_chat_stream(
                 message = "Please help me analyze this image/file"
             logger.info(f"   • 📎 File upload without message, using default: {message}")
         
-        # 转换 files
+        # 🆕 转换 files（用于前端回显）
         files = None
         if request.files:
+            # 前端传了 files 结构，直接使用
             files = [f.model_dump() for f in request.files]
+        elif all_file_urls:
+            # 🆕 自动从 URL 生成 files 结构
+            files = []
+            image_extensions = ('.jpg', '.jpeg', '.png', '.gif', '.webp', '.bmp')
+            
+            for url in all_file_urls:
+                url_lower = url.lower()
+                
+                # 🆕 优先使用 file_urls 中绑定的文件名，否则从 URL 提取
+                if url in file_name_map:
+                    file_name = file_name_map[url]
+                else:
+                    file_name = url.split('/')[-1].split('?')[0] if '/' in url else url
+                
+                if any(url_lower.endswith(ext) for ext in image_extensions):
+                    files.append({"type": "image", "url": url, "name": file_name})
+                else:
+                    files.append({"type": "document", "url": url, "name": file_name})
+            
+            logger.info(f"   • 📎 Auto-generated files structure: {len(files)} items")
+            for f in files:
+                logger.info(f"      - {f['type']}: {f['name']}")
         
         # 🔒 获取 session 锁
         lock = await get_session_lock(session_id)
@@ -1937,7 +2073,7 @@ async def web_chat_stream(
                     action=request.action,
                     turn_id=request.turn_id,
                     orchestrator=orchestrator,
-                    file_uris=file_uris if file_uris else None,
+                    file_uris=all_file_urls if all_file_urls else None,  # 🆕 使用合并后的 URL 列表
                     files=files,
                     referenced_text=request.referenced_text,
                     action_type_hint=request.action_type,
@@ -1947,7 +2083,8 @@ async def web_chat_stream(
                     question_context=request.question_context,
                     token=token,
                     environment=env,  # 🆕 环境标识
-                    version_path=request.version_path  # 🌳 版本路径
+                    version_path=request.version_path,  # 🌳 版本路径
+                    display_message=display_message  # 🆕 原始按钮文本，用于历史记录
                 ):
                     yield event
                 logger.info(f"🔓 [Web] Released lock for session: {session_id}")
@@ -2370,11 +2507,17 @@ async def get_user_sessions(
 async def get_chat_history(
     question_id: str = Query(..., alias="aiQuestionId", description="题目 ID"),
     answer_id: str = Query(..., alias="answerId", description="答案 ID"),
+    user_id: str = Query(..., description="🔐 用户 ID（必填，用于隔离不同用户的聊天记录）"),
     version_path: Optional[str] = Query(None, description="🌳 版本路径，格式: 'turn_id:version_id,turn_id:version_id'，如 '1:2' 表示选中 Turn 1 的 version 2"),
     orchestrator: SkillOrchestrator = Depends(get_skill_orchestrator)
 ):
     """
     📜 获取单个会话的聊天历史（支持树状版本结构）
+    
+    🔐 安全说明：
+    - user_id 是必填参数，用于隔离不同用户的聊天记录
+    - 每个用户只能看到自己的聊天历史
+    - 分享链接时，其他用户看到的是空的聊天记录（需要自己开始新对话）
     
     🌳 树状版本概念：
     - 每个 turn 可以有多个版本（通过 regenerate/edit 产生）
@@ -2382,6 +2525,7 @@ async def get_chat_history(
     - 切换版本时，显示该版本及其子树的完整对话链
     
     参数：
+    - user_id: 用户 ID（必填）
     - version_path: 指定要查看的版本路径
       - 不传: 返回默认路径（每个 turn 使用最新版本）
       - '1:1': Turn 1 使用 version 1（原始版本）
@@ -2397,31 +2541,26 @@ async def get_chat_history(
     session_id = f"q{question_id}_a{answer_id}"
     
     try:
-        # 查找 MD 文件
+        # 🔐 查找指定用户的 MD 文件（不再搜索所有用户目录）
         artifacts_dir = Path("artifacts")
         if not artifacts_dir.exists():
             artifacts_dir = Path("backend/artifacts")
         if not artifacts_dir.exists():
             artifacts_dir = Path("/root/usr/skill_agent_demo/backend/artifacts")
         
-        # 搜索所有用户目录，找最近修改的文件
+        # 🔐 只在指定用户的目录下查找（安全隔离）
+        user_dir = artifacts_dir / user_id
         md_file = None
-        user_id = None
-        latest_mtime = 0
         
-        for user_dir in artifacts_dir.iterdir():
-            if user_dir.is_dir():
-                potential_file = user_dir / f"{session_id}.md"
-                if potential_file.exists():
-                    # 🆕 选择最近修改的文件
-                    mtime = potential_file.stat().st_mtime
-                    if mtime > latest_mtime:
-                        latest_mtime = mtime
-                        md_file = potential_file
-                        user_id = user_dir.name
+        if user_dir.exists() and user_dir.is_dir():
+            potential_file = user_dir / f"{session_id}.md"
+            if potential_file.exists():
+                md_file = potential_file
         
         if md_file:
             logger.info(f"📄 Found session file: {md_file} (user={user_id})")
+        else:
+            logger.info(f"📄 No session file found for user={user_id}, session={session_id}")
         
         if not md_file:
             return {
@@ -2431,8 +2570,10 @@ async def get_chat_history(
                     "question_id": question_id,
                     "answer_id": answer_id,
                     "session_id": session_id,
-                    "chat_list": [],
-                    "total": 0
+                    "user_id": user_id,  # 🔐 返回请求的 user_id
+                    "chat_data": [],
+                    "total": 0,
+                    "has_versions": False
                 }
             }
         
@@ -2486,8 +2627,13 @@ async def get_chat_history(
                                 if "text" in content:
                                     # 普通 chat 响应
                                     assistant_message = content["text"]
-                                elif "intuition" in content:
-                                    # explain_skill 响应：组合多个字段
+                                elif content.get("type") == "calculation":
+                                    # 🆕 explain_skill 计算类型响应
+                                    expression = content.get("expression", "")
+                                    answer = content.get("answer", "")
+                                    assistant_message = content.get("text", f"The result of {expression} is {answer}.")
+                                elif "intuition" in content or content.get("type") == "concept":
+                                    # explain_skill 概念响应：组合多个字段
                                     parts = []
                                     if content.get("concept"):
                                         parts.append(f"**{content['concept']}**\n")
@@ -2644,13 +2790,23 @@ async def get_chat_history(
                     if response_match:
                         assistant_message = response_match.group(1).strip()
             
+            # 🆕 提取 referenced_text（从 attachments 或顶层字段）
+            ref_text = None
+            attachments = v.get("attachments", {})
+            if isinstance(attachments, dict):
+                ref_text = attachments.get("referenced_text")
+            if not ref_text:
+                ref_text = v.get("referenced_text")
+            
             turn_versions_map[turn_id].append({
                 "version_id": v.get("version_id"),
                 "is_original": v.get("is_original", False),
                 "action": action,
                 "timestamp": v.get("timestamp"),
                 "user_message": user_msg,
-                "assistant_message": assistant_message  # 🔄 完整内容
+                "assistant_message": assistant_message,  # 🔄 完整内容
+                "referenced_text": ref_text,  # 🆕 添加 referenced_text
+                "files": v.get("files")  # 🆕 添加 files（从 versions.json）
             })
         
         # 🌳 加载树状版本信息
@@ -2677,12 +2833,21 @@ async def get_chat_history(
                         "turn_count": len(branch_data.get("turns", []))
                     })
                 
-                # 检查哪些 turns 有多个版本
+                # 检查哪些 turns 有多个版本，并提取 files 信息
+                turn_files_map = {}  # {turn_num: files}  🆕 存储每个 turn 的文件信息
                 for turn_key, turn_data in tree.get("turns", {}).items():
                     turn_num = int(turn_key)
                     versions_count = len(turn_data.get("versions", {}))
                     if versions_count > 1:
                         version_turns.add(turn_num)
+                    
+                    # 🆕 提取 files 信息（从任意版本中获取，通常只有第一个版本有 files）
+                    for branch_name, version_info in turn_data.get("versions", {}).items():
+                        files = version_info.get("files")
+                        if files:
+                            turn_files_map[turn_num] = files
+                            logger.info(f"📎 Loaded files for turn {turn_num}: {len(files)} files")
+                            break  # 只需要获取一次
                 
                 tree_info = {
                     "active_branch": active_branch,
@@ -2690,6 +2855,13 @@ async def get_chat_history(
                     "branches": branches,
                     "branch_switched": branch_switched
                 }
+                
+                # 🆕 更新 chat_list 中的 files 信息
+                for item in chat_list:
+                    turn_num = item.get("turn")
+                    if turn_num in turn_files_map:
+                        item["files"] = turn_files_map[turn_num]
+                        
             except Exception as tree_err:
                 logger.warning(f"⚠️ Failed to load version tree: {tree_err}")
         
@@ -2702,31 +2874,37 @@ async def get_chat_history(
                 feedback_dir = Path("/root/usr/skill_agent_demo/backend/feedback")
             
             # 🆕 定义 feedback_map 在外部，确保后续代码可访问
+            # 使用 version_path（格式: "turn:version_id"）作为 key
             feedback_map = {}
             user_feedback_file = feedback_dir / f"{user_id}_feedback.json"
             if user_feedback_file.exists():
                 try:
                     all_feedback = json.loads(user_feedback_file.read_text(encoding='utf-8'))
-                    # 按 turn + version_id 构建 feedback map
+                    # 🆕 按 version_path 构建 feedback map（兼容旧数据）
                     for fb in all_feedback:
                         if fb.get("session_id") == session_id:
-                            turn_num = fb.get("turn_number")
-                            ver_id = fb.get("version_id", 1)
-                            key = f"{turn_num}_{ver_id}"
-                            feedback_map[key] = {
+                            # 优先使用 version_path，兼容旧数据用 turn + version_id
+                            version_path_key = fb.get("version_path")
+                            if not version_path_key:
+                                turn_num = fb.get("turn_number")
+                                ver_id = fb.get("version_id", 1)
+                                version_path_key = f"{turn_num}:{ver_id}"
+                            
+                            feedback_map[version_path_key] = {
                                 "type": fb.get("feedback_type"),
                                 "reason": fb.get("reason"),
                                 "timestamp": fb.get("timestamp"),
-                                "version_id": ver_id
+                                "version_id": fb.get("version_id", 1),
+                                "version_path": version_path_key
                             }
                     
-                    # 更新 chat_list 中的 feedback（按 turn + version 匹配）
+                    # 更新 chat_list 中的 feedback（按 version_path 匹配）
                     for item in chat_list:
                         turn_num = item.get("turn")
                         ver_id = item.get("version_id", 1) if "version_id" in item else 1
-                        key = f"{turn_num}_{ver_id}"
-                        if key in feedback_map:
-                            item["feedback"] = feedback_map[key]
+                        version_path_key = f"{turn_num}:{ver_id}"
+                        if version_path_key in feedback_map:
+                            item["feedback"] = feedback_map[version_path_key]
                 except Exception as fb_err:
                     logger.warning(f"⚠️ Failed to load feedback: {fb_err}")
         
@@ -2901,8 +3079,8 @@ async def get_chat_history(
                 # 查找原始 item 以获取额外信息
                 original_item = next((item for item in chat_list if item["turn"] == turn_num), {})
                 
-                # 🆕 获取该版本的 feedback（严格按 version_id 匹配，不 fallback）
-                ver_feedback_key = f"{turn_num}_{selected_version['version_id']}"
+                # 🆕 获取该版本的 feedback（使用 version_path 格式匹配）
+                ver_feedback_key = f"{turn_num}:{selected_version['version_id']}"
                 ver_feedback = feedback_map.get(ver_feedback_key)  # 不 fallback，每个版本独立
                 
                 current_chat_list.append({
@@ -2942,8 +3120,8 @@ async def get_chat_history(
                     item["total_versions"] = 1
                     item["is_original"] = True
                     item["action"] = "original"
-                    # 获取该 turn 的 feedback
-                    fb_key = f"{turn_num}_1"
+                    # 获取该 turn 的 feedback（使用 version_path 格式）
+                    fb_key = f"{turn_num}:1"
                     item["feedback"] = feedback_map.get(fb_key) or item.get("feedback")
                     current_chat_list.append(item)
         
@@ -2957,8 +3135,8 @@ async def get_chat_history(
             original_item = next((item for item in chat_list if item["turn"] == turn_num), {})
             
             for v in version_data["versions"]:
-                # 🆕 获取该版本的 feedback
-                ver_fb_key = f"{turn_num}_{v['version_id']}"
+                # 🆕 获取该版本的 feedback（使用 version_path 格式）
+                ver_fb_key = f"{turn_num}:{v['version_id']}"
                 ver_feedback = feedback_map.get(ver_fb_key)
                 
                 all_versions_list.append({
@@ -2983,8 +3161,8 @@ async def get_chat_history(
                     for v in vd["versions"]
                 )
                 if not is_duplicate:
-                    # 获取该 turn 的 feedback
-                    fb_key = f"{turn_num}_1"
+                    # 获取该 turn 的 feedback（使用 version_path 格式）
+                    fb_key = f"{turn_num}:1"
                     fb = feedback_map.get(fb_key) or item.get("feedback")
                     
                     all_versions_list.append({
@@ -3105,9 +3283,13 @@ async def get_chat_history(
                         "first_action": v.get("action", "original"),
                         "first_version_id": v.get("version_id"),
                         "first_timestamp": v.get("timestamp"),
-                        "is_original": v.get("is_original", False)
+                        "is_original": v.get("is_original", False),
+                        "referenced_text": v.get("referenced_text")  # 🆕 保存 referenced_text
                     }
                 message_groups[msg]["versions"].append(v)
+                # 🆕 如果该版本有 referenced_text，更新 group（优先取最新的）
+                if v.get("referenced_text"):
+                    message_groups[msg]["referenced_text"] = v.get("referenced_text")
             
             # 为每个 user_message 创建一条记录
             for msg, group in message_groups.items():
@@ -3115,7 +3297,8 @@ async def get_chat_history(
                 answer_list = []
                 for v in sorted(group["versions"], key=lambda x: x.get("version_id", 0)):
                     ver_id = v.get("version_id")
-                    fb_key = f"{turn_num}_{ver_id}"
+                    # 🆕 使用 version_path 格式作为 feedback key
+                    fb_key = f"{turn_num}:{ver_id}"
                     
                     answer_list.append({
                         "version_id": ver_id,
@@ -3139,61 +3322,101 @@ async def get_chat_history(
                 # 计算 parent_version_id 和 parent_version_path
                 parent_version_id = None
                 parent_version_path = None
+                
                 if turn_num > 1:
-                    # 🆕 从 tree.json 获取该记录所属分支的 turns 列表
-                    effective_branch = target_branch or record_branch or "main"
-                    effective_branch_info = tree.get("branches", {}).get(effective_branch, {})
-                    effective_branch_turns = set(effective_branch_info.get("turns", []))
+                    # 🆕 优先从 tree.json 读取存储的 parent_version_path
+                    turn_info = tree.get("turns", {}).get(str(turn_num), {})
+                    stored_parent_path = turn_info.get("parent_version_path")
                     
-                    # 如果是子分支，需要包含父分支的 turns
-                    parent_branch_name = effective_branch_info.get("parent_branch")
-                    fork_from = effective_branch_info.get("fork_from_turn")
-                    if parent_branch_name and fork_from:
-                        parent_branch_turns = tree.get("branches", {}).get(parent_branch_name, {}).get("turns", [])
-                        for pt in parent_branch_turns:
-                            if pt < fork_from:
-                                effective_branch_turns.add(pt)
-                        effective_branch_turns.add(fork_from)
+                    # 也检查该分支下的版本信息中是否有存储
+                    if not stored_parent_path and record_branch:
+                        branch_version_info = turn_info.get("versions", {}).get(record_branch, {})
+                        stored_parent_path = branch_version_info.get("parent_version_path")
                     
-                    # 在分支中找上一个 turn
-                    if effective_branch_turns:
-                        prev_turns_in_branch = [t for t in effective_branch_turns if t < turn_num]
-                        if prev_turns_in_branch:
-                            prev_turn = max(prev_turns_in_branch)
-                            
-                            # 确定上一个 turn 的版本 ID
-                            if effective_branch != "main":
-                                # 子分支
-                                if prev_turn == fork_from:
-                                    # fork 点使用当前分支的版本
-                                    prev_turn_versions = tree.get("turns", {}).get(str(prev_turn), {}).get("versions", {})
-                                    if effective_branch in prev_turn_versions:
-                                        parent_version_id = int(effective_branch.split("_v")[-1]) if "_v" in effective_branch else 2
+                    if stored_parent_path:
+                        # 使用存储的 parent_version_path
+                        parent_version_path = stored_parent_path
+                        # 解析 parent_version_id
+                        try:
+                            parts = stored_parent_path.split(":")
+                            if len(parts) >= 2:
+                                parent_version_id = int(parts[1])
+                        except:
+                            parent_version_id = 1
+                        logger.debug(f"📍 Using stored parent_version_path={parent_version_path} for turn {turn_num}")
+                    else:
+                        # Fallback: 动态计算 parent_version_path
+                        effective_branch = target_branch or record_branch or "main"
+                        effective_branch_info = tree.get("branches", {}).get(effective_branch, {})
+                        effective_branch_turns = set(effective_branch_info.get("turns", []))
+                        
+                        # 如果是子分支，需要包含父分支的 turns
+                        parent_branch_name = effective_branch_info.get("parent_branch")
+                        fork_from = effective_branch_info.get("fork_from_turn")
+                        if parent_branch_name and fork_from:
+                            parent_branch_turns = tree.get("branches", {}).get(parent_branch_name, {}).get("turns", [])
+                            for pt in parent_branch_turns:
+                                if pt < fork_from:
+                                    effective_branch_turns.add(pt)
+                            effective_branch_turns.add(fork_from)
+                        
+                        # 在分支中找上一个 turn
+                        if effective_branch_turns:
+                            prev_turns_in_branch = [t for t in effective_branch_turns if t < turn_num]
+                            if prev_turns_in_branch:
+                                prev_turn = max(prev_turns_in_branch)
+                                
+                                # 确定上一个 turn 的版本 ID
+                                if effective_branch != "main":
+                                    # 子分支
+                                    if prev_turn == fork_from:
+                                        # fork 点使用当前分支的版本
+                                        prev_turn_versions = tree.get("turns", {}).get(str(prev_turn), {}).get("versions", {})
+                                        if effective_branch in prev_turn_versions:
+                                            parent_version_id = int(effective_branch.split("_v")[-1]) if "_v" in effective_branch else 2
+                                        else:
+                                            parent_version_id = 1
                                     else:
                                         parent_version_id = 1
                                 else:
                                     parent_version_id = 1
-                            else:
+                                
+                                parent_version_path = f"{prev_turn}:{parent_version_id}"
+                        elif branch_turns:
+                            # Fallback 到全局分支过滤
+                            prev_turns_in_branch = [t for t in branch_turns if t < turn_num]
+                            if prev_turns_in_branch:
+                                prev_turn = max(prev_turns_in_branch)
                                 parent_version_id = 1
-                            
-                            parent_version_path = f"{prev_turn}:{parent_version_id}"
-                    elif branch_turns:
-                        # Fallback 到全局分支过滤
-                        prev_turns_in_branch = [t for t in branch_turns if t < turn_num]
-                        if prev_turns_in_branch:
-                            prev_turn = max(prev_turns_in_branch)
-                            parent_version_id = 1
-                            parent_version_path = f"{prev_turn}:{parent_version_id}"
-                    
-                    # 最终 Fallback: 使用简单的上一个 turn
-                    if not parent_version_path:
-                        prev_turn = str(turn_num - 1)
-                        if prev_turn in last_version_by_turn:
-                            parent_version_id = last_version_by_turn[prev_turn]
-                            parent_version_path = f"{int(prev_turn)}:{parent_version_id}"  # 🆕 格式: "turn:version_id"
+                                parent_version_path = f"{prev_turn}:{parent_version_id}"
+                        
+                        # 最终 Fallback: 使用简单的上一个 turn
+                        if not parent_version_path:
+                            prev_turn = str(turn_num - 1)
+                            if prev_turn in last_version_by_turn:
+                                parent_version_id = last_version_by_turn[prev_turn]
+                                parent_version_path = f"{int(prev_turn)}:{parent_version_id}"  # 格式: "turn:version_id"
                 
                 # 第一个版本的 version_path 作为这条记录的默认 path
                 first_version_path = f"{turn_num}:{group['first_version_id']}"
+                
+                # 🆕 获取 referenced_text（优先从 group，然后从 chat_list）
+                ref_text = group.get("referenced_text")
+                if not ref_text:
+                    # 从 chat_list 中查找该 turn 的 referenced_text
+                    for item in chat_list:
+                        if item.get("turn") == turn_num:
+                            ref_text = item.get("referenced_text")
+                            if ref_text:
+                                break
+                
+                # 🆕 获取 files（从 chat_list 或 turn_files_map）
+                turn_files = None
+                for item in chat_list:
+                    if item.get("turn") == turn_num:
+                        turn_files = item.get("files")
+                        if turn_files:
+                            break
                 
                 chat_data.append({
                     "turn": turn_num,
@@ -3204,7 +3427,9 @@ async def get_chat_history(
                     "answerList": answer_list,
                     "is_original": group["is_original"],
                     "parent_version_id": parent_version_id,
-                    "parent_version_path": parent_version_path  # 🆕 父版本的 path
+                    "parent_version_path": parent_version_path,  # 🆕 父版本的 path
+                    "referenced_text": ref_text,  # 🆕 添加 referenced_text
+                    "files": turn_files  # 🆕 添加 files
                 })
                 
                 # 更新该 turn 的最后版本 ID
@@ -3400,7 +3625,8 @@ async def generate_studyx_sse_stream(
             action_type=action_type_hint,
             files=files,
             language=language,
-            question_context=question_context  # 🆕 传递题目上下文
+            question_context=question_context,  # 🆕 传递题目上下文
+            display_message=message  # 🆕 StudyX 端点使用原始 message（这里没有按钮文本转换）
         )
         
         # 2. 提取内容
@@ -4061,18 +4287,38 @@ async def submit_feedback(
     if not user_id:
         return {"code": 400, "msg": "user_id is required", "data": None}
     
-    # 兼容 turn_id 和 turn_number
-    turn_id = body.get("turn_id") or body.get("turn_number")
-    if not turn_id:
-        return {"code": 400, "msg": "turn_id or turn_number is required", "data": None}
-    turn_id = int(turn_id)
+    # 🆕 优先使用 version_path（格式: "turn:version_id"，如 "1:3"）
+    version_path = body.get("version_path")
+    turn_id = None
+    version_id = 1
     
-    # 🆕 版本 ID（用于区分同一 turn 的不同版本）
-    version_id = body.get("version_id", 1)
-    try:
-        version_id = int(version_id)
-    except:
-        version_id = 1
+    if version_path:
+        # 从 version_path 解析 turn_id 和 version_id
+        try:
+            parts = version_path.split(":")
+            if len(parts) >= 2:
+                turn_id = int(parts[0])
+                version_id = int(parts[1])
+                logger.info(f"📍 Parsed version_path '{version_path}' -> turn_id={turn_id}, version_id={version_id}")
+        except Exception as e:
+            logger.warning(f"⚠️ Failed to parse version_path '{version_path}': {e}")
+    
+    # 如果没有 version_path 或解析失败，使用传统参数
+    if turn_id is None:
+        turn_id = body.get("turn_id") or body.get("turn_number")
+        if not turn_id:
+            return {"code": 400, "msg": "version_path or turn_id/turn_number is required", "data": None}
+        turn_id = int(turn_id)
+        
+        # 版本 ID（用于区分同一 turn 的不同版本）
+        version_id = body.get("version_id", 1)
+        try:
+            version_id = int(version_id)
+        except:
+            version_id = 1
+    
+    # 构建标准化的 version_path（用于存储和匹配）
+    version_path = f"{turn_id}:{version_id}"
     
     # 🌳 分支参数
     branch = body.get("branch", "main")
@@ -4120,15 +4366,22 @@ async def submit_feedback(
             except:
                 existing_feedback = []
         
-        # 🆕 查找是否已有该 turn + version_id 的反馈
-        feedback_key = f"{session_id}_{turn_id}_v{version_id}"
+        # 🆕 使用 version_path 作为唯一标识（格式: "turn:version_id"）
+        feedback_key = f"{session_id}_{version_path}"
         found_idx = None
         for i, fb in enumerate(existing_feedback):
-            # 🆕 匹配 session + turn + version_id
-            fb_version = fb.get("version_id", 1)
-            if fb.get("session_id") == session_id and fb.get("turn_number") == turn_id and fb_version == version_id:
-                found_idx = i
-                break
+            # 🆕 优先按 version_path 匹配，兼容旧数据按 turn + version_id 匹配
+            fb_version_path = fb.get("version_path")
+            if fb_version_path:
+                if fb.get("session_id") == session_id and fb_version_path == version_path:
+                    found_idx = i
+                    break
+            else:
+                # 兼容旧数据
+                fb_version = fb.get("version_id", 1)
+                if fb.get("session_id") == session_id and fb.get("turn_number") == turn_id and fb_version == version_id:
+                    found_idx = i
+                    break
         
         if feedback_type == "cancel":
             # 取消反馈：删除现有记录
@@ -4143,7 +4396,8 @@ async def submit_feedback(
                 "session_id": session_id,
                 "branch": branch,
                 "turn_number": turn_id,
-                "version_id": version_id,  # 🆕 保存版本 ID
+                "version_id": version_id,
+                "version_path": version_path,  # 🆕 存储完整 version_path（格式: "turn:version_id"）
                 "feedback_type": feedback_type,
                 "reason": reason,
                 "detail": detail,
@@ -4171,7 +4425,8 @@ async def submit_feedback(
             "data": {
                 "session_id": session_id,
                 "turn_id": turn_id,
-                "version_id": version_id,  # 🆕 返回版本 ID
+                "version_id": version_id,
+                "version_path": version_path,  # 🆕 返回 version_path
                 "branch": branch,
                 "feedback_type": feedback_type,
                 "action": "cancelled" if feedback_type == "cancel" else "saved"

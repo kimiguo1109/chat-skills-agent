@@ -941,7 +941,26 @@ class SkillRegistry:
     def _extract_topic(self, message: str, metadata: Dict[str, Any]) -> Optional[str]:
         """从消息中提取主题 - 使用简单直接的方法"""
         
-        # 🔥 Step 0: 常见的 follow-up 响应词（这些消息应使用 current_topic）
+        # 🔥 Step 0: 检测 follow-up 修饰请求（这些消息应使用 current_topic，不提取新主题）
+        # "解释得简单些"、"讲得详细点"、"说清楚一点" 等都是追问请求
+        followup_modifier_patterns = [
+            r'解释得.{0,4}[简单详细清楚明白]',  # "解释得简单些"、"解释得详细一点"
+            r'讲得.{0,4}[简单详细清楚明白]',    # "讲得简单点"
+            r'说得.{0,4}[简单详细清楚明白]',    # "说得清楚些"
+            r'再.{0,2}[简单详细清楚]',          # "再简单一点"
+            r'更[简单详细清楚明白]',             # "更简单"、"更详细"
+            r'[简单详细清楚][一点些]',           # "简单一点"、"详细些"
+            r'不太[懂理解明白清楚]',             # "不太懂"、"不太理解"
+            r'没[懂理解明白清楚]',               # "没懂"、"没理解"
+            r'还是不[懂理解明白清楚]',           # "还是不懂"
+        ]
+        
+        for pattern in followup_modifier_patterns:
+            if re.search(pattern, message):
+                logger.info(f"🔗 Follow-up modifier detected: '{pattern}' in message, skipping topic extraction")
+                return None
+        
+        # 🔥 Step 0.5: 常见的 follow-up 响应词（这些消息应使用 current_topic）
         # "好的，给我三张闪卡" / "嗯，再来几道题" / "是的，帮我做笔记"
         followup_starters = [
             '好的', '好', '嗯', '是的', '可以', '行', '那', '那就', '那么',

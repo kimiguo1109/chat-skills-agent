@@ -203,13 +203,13 @@ async def get_user_language_from_studyx(token: str, environment: str = "test") -
                         logger.info(f"🌐 User language from StudyX: {qlang} → {lang_code}")
                         return lang_code
                     elif data.get("code") == -1 and "no user preferences" in data.get("msg", "").lower():
-                        # 🆕 用户没有设置语言偏好（code=-1），返回默认英语
-                        logger.info(f"🌐 User has no language preference set (code=-1), using default: en")
-                        return "en"
+                        # 🆕 用户没有设置语言偏好（code=-1），返回 "auto" 让系统从消息自动检测
+                        logger.info(f"🌐 User has no language preference set (code=-1), using auto detection")
+                        return "auto"
                     elif data.get("code") == 0 and not data.get("data"):
-                        # 用户没有设置语言偏好（data 为空），返回默认英语
-                        logger.info(f"🌐 User has no language preference set (empty data), using default: en")
-                        return "en"
+                        # 用户没有设置语言偏好（data 为空），返回 "auto" 让系统从消息自动检测
+                        logger.info(f"🌐 User has no language preference set (empty data), using auto detection")
+                        return "auto"
                     else:
                         logger.warning(f"⚠️ StudyX API returned error: code={data.get('code')}, msg={data.get('msg')}")
                 else:
@@ -543,7 +543,9 @@ async def execute_skill_pipeline(
     # 🆕 语言设置
     language: str = "en",
     # 🆕 题目上下文（从 StudyX 获取的原始题目和答案）
-    question_context: Optional[str] = None
+    question_context: Optional[str] = None,
+    # 🆕 显示消息（原始用户输入，用于历史记录显示）
+    display_message: Optional[str] = None
 ) -> Dict[str, Any]:
     """
     执行完整的 skill 框架流程
@@ -576,6 +578,11 @@ async def execute_skill_pipeline(
     enhanced_message = message
     context_prefix = ""
     
+    # 🔥 确定用于历史记录的消息（优先使用外部传入的 display_message）
+    # display_message 是用户实际输入/点击的内容，如 "💡 Explain the concept"
+    # message 是可能被转换后的提示，如 "Please explain this concept in detail"
+    history_message = display_message if display_message else message
+    
     # 🆕 处理快捷操作 - 将 UI 按钮映射到具体指令（支持多语言）
     if action_type:
         # 多语言 action 映射
@@ -601,7 +608,8 @@ async def execute_skill_pipeline(
         action_prompt = action_mapping.get(action_type, default_action)
         if not message.strip():
             enhanced_message = action_prompt
-            original_message = action_prompt  # 快捷操作也需要更新原始消息
+            # 🔥 不要覆盖 original_message - 保持空字符串或原始按钮文本
+            # original_message 用于显示，enhanced_message 用于 LLM 处理
         else:
             enhanced_message = f"{message}, {action_prompt}" if language == "en" else f"{message}，{action_prompt}"
         logger.info(f"⚡ Quick action: {action_type} (lang={language})")
@@ -754,15 +762,26 @@ async def execute_skill_pipeline(
         token_usage["intent_router"]["method"] = "skill_registry"
         token_usage["intent_router"]["tokens"] = 0
     
+    # ============= 🔥 强制 Chat 模式（禁用 Skills）=============
+    # skill_hint='chat' 时，强制 intent 为 'other'，跳过所有 skills，直接使用 LLM chat
+    # 后续需要开启 Skills 时，移除 skill_hint='chat' 即可
+    if skill_hint == "chat":
+        original_intent = intent_result.intent
+        intent_result.intent = "other"
+        intent_result.parameters['forced_chat_mode'] = True
+        logger.info(f"💬 [Chat Mode] skill_hint='chat' → forcing intent '{original_intent}' → 'other' (Skills disabled)")
+    
     # ============= STEP 2.4: 🆕 处理 file_uris 的特殊情况 =============
     # 当有文件附件时，根据意图类型决定是否 override
     has_files = file_uris and len(file_uris) > 0
     if has_files:
         # 🆕 询问类/解释类 intent 不应该被 override 为 quiz/flashcard
         # 这些 intent 表示用户在询问/讨论文件内容，而不是要求生成学习内容
+        # 🔥 新增：notes 也应该直接分析文件，而不是调用 notes_skill 生成结构化笔记
         non_generation_intents = {
             "contextual", "explain", "other", "help",  # 询问/解释类
             "explain_request",  # 解释请求也可能只是讨论
+            "notes",  # 🆕 "summarize PDF" 等请求应该直接分析文件内容
         }
         
         if intent_result.intent in non_generation_intents:
@@ -838,7 +857,7 @@ async def execute_skill_pipeline(
                 memory_manager=orchestrator.memory_manager,
                 user_id=user_id,
                 session_id=session_id,
-                message=message,
+                message=history_message,  # 🔥 使用原始用户消息
                 response_text=clarification_response,
                 intent="clarification",
                 current_topic=current_topic,
@@ -881,7 +900,7 @@ async def execute_skill_pipeline(
             memory_manager=orchestrator.memory_manager,
             user_id=user_id,
             session_id=session_id,
-            message=message,
+            message=history_message,  # 🔥 使用原始用户消息
             response_text=help_text,
             intent="help",
             files=files,
@@ -899,6 +918,31 @@ async def execute_skill_pipeline(
             "content": {"text": help_text},
             "token_usage": token_usage
         }
+    
+    # 🔥 处理快捷按钮 + question_context 的情况
+    # 当用户点击 "Explain the concept" 等按钮时，应该直接基于 question_context 回答
+    # 而不是调用 explain_skill 生成结构化内容（因为 topic 是 "this concept" 没有实际意义）
+    if action_type and question_context:
+        quick_action_intents = ["explain_request", "explain", "notes"]  # 这些 intent 点击按钮时应该直接用 LLM
+        if intent_result.intent in quick_action_intents:
+            logger.info(f"🎯 Quick action '{action_type}' with question_context → using 'other' intent for direct answer")
+            intent_result.intent = 'other'
+            intent_result.parameters['from_action_type'] = action_type
+            intent_result.parameters['has_question_context'] = True
+    
+    # 🔥 处理 follow-up explain 请求（如 "解释得简单些"、"更详细一点"）
+    # 当有 question_context 但 topic 无效时，应该使用 'other' intent 直接回答
+    if question_context and intent_result.intent in ["explain_request", "explain"]:
+        # 检查 topic 是否无效（空、太短、或是无意义词）
+        topic = intent_result.topic
+        invalid_topics = ["新用户", "第一", "第二", "这个", "那个", "得", "些", "得 些", ""]
+        is_topic_invalid = not topic or len(str(topic).strip()) < 2 or topic in invalid_topics
+        
+        if is_topic_invalid:
+            logger.info(f"🔄 Follow-up explain request with invalid topic '{topic}' + question_context → using 'other' intent")
+            intent_result.intent = 'other'
+            intent_result.parameters['is_followup'] = True
+            intent_result.parameters['has_question_context'] = True
     
     # 🆕 处理 clarification / clarification_needed intent（需要澄清）- 返回引导性问题
     # 🔥 但如果有 referenced_text、question_context 或有 conversation history，跳过 clarification
@@ -1050,7 +1094,7 @@ async def execute_skill_pipeline(
                     memory_manager=orchestrator.memory_manager,
                     user_id=user_id,
                     session_id=session_id,
-                    message=message,
+                    message=history_message,  # 🔥 使用原始用户消息
                     response_text=clarification_text,
                     intent="clarification",
                     current_topic=current_topic,
@@ -1096,7 +1140,7 @@ async def execute_skill_pipeline(
                 memory_manager=orchestrator.memory_manager,
                 user_id=user_id,
                 session_id=session_id,
-                message=intent_parse_message,  # 保存原始消息
+                message=history_message,  # 🔥 使用原始用户消息（如按钮文本）
                 response_text=chat_response,
                 intent="other",
                 current_topic=current_topic,
@@ -1128,14 +1172,18 @@ async def execute_skill_pipeline(
             }
         except Exception as e:
             logger.error(f"❌ Chat conversation failed: {e}")
-            fallback_text = "抱歉，我目前专注于学习辅助功能。试试问我一个学习相关的问题吧！😊"
+            # 🔥 使用用户语言
+            if language == "zh":
+                fallback_text = "抱歉，我目前专注于学习辅助功能。试试问我一个学习相关的问题吧！😊"
+            else:
+                fallback_text = "Sorry, I'm currently focused on learning assistance. Try asking me a learning-related question! 😊"
             
             # 🔥 保存到 MD（即使失败也记录，使用原始消息）
             await _save_chat_to_session(
                 memory_manager=orchestrator.memory_manager,
                 user_id=user_id,
                 session_id=session_id,
-                message=intent_parse_message,  # 保存原始消息
+                message=history_message,  # 🔥 使用原始用户消息（如按钮文本）
                 response_text=fallback_text,
                 intent="other",
                 current_topic=current_topic,
@@ -1179,11 +1227,50 @@ async def execute_skill_pipeline(
     # ============= STEP 3: Skill 执行 =============
     logger.info(f"🎯 STEP 3: Executing Skill ({intent_result.intent})...")
     
+    # 🆕 构建 additional_params，包含 question_context 用于 quiz/flashcard
+    additional_params = {"language": language}
+    if question_context:
+        additional_params["question_context"] = question_context
+        # 🔥 关键：把 question_context 作为 input_text 传递给 quiz skill
+        # 这样 quiz 可以基于题目上下文生成相关题目
+        intent_result.parameters['input_text'] = question_context
+        intent_result.parameters['question_context'] = question_context
+        logger.info(f"📚 Passing question_context ({len(question_context)} chars) to skill params")
+    
+    # 🔥 Quiz/Flashcard 上下文验证：确保有足够的上下文生成相关内容
+    # 如果没有 topic、没有 question_context、没有 referenced_text、没有文件，则尝试从对话历史获取
+    generation_intents = ["quiz_request", "flashcard_request", "quiz", "flashcard"]
+    if intent_result.intent in generation_intents:
+        has_valid_topic = intent_result.topic and len(intent_result.topic) >= 2 and intent_result.topic not in ["新用户", "第一", "第二", "这个", "那个"]
+        has_context = question_context or referenced_text or (file_uris and len(file_uris) > 0)
+        
+        if not has_valid_topic and not has_context:
+            logger.warning(f"⚠️ Quiz/Flashcard request without valid context, trying to load conversation history...")
+            # 尝试从对话历史获取上下文
+            try:
+                conv_history = await _load_conversation_history(
+                    memory_manager=orchestrator.memory_manager,
+                    user_id=user_id,
+                    session_id=session_id,
+                    max_turns=3
+                )
+                if conv_history:
+                    # 从历史中提取最近的 assistant 回复作为参考内容
+                    history_context = "\n".join(conv_history[-4:]) if len(conv_history) > 4 else "\n".join(conv_history)
+                    intent_result.parameters['input_text'] = history_context
+                    intent_result.parameters['reference_explanation'] = history_context
+                    logger.info(f"📚 Using conversation history ({len(history_context)} chars) as quiz context")
+                else:
+                    # 没有历史，请求用户提供主题
+                    logger.warning(f"⚠️ No context available for quiz generation, will ask for topic")
+            except Exception as e:
+                logger.warning(f"⚠️ Failed to load conversation history: {e}")
+    
     orchestrator_response = await orchestrator.execute(
         intent_result=intent_result,
         user_id=user_id,
         session_id=session_id,
-        additional_params={"language": language}  # 🆕 传递语言设置
+        additional_params=additional_params  # 🆕 包含 language 和 question_context
     )
     
     # 🆕 保存 attachments 到 session metadata（orchestrator 内部保存 turn，这里补充 attachments）
@@ -1228,7 +1315,7 @@ async def execute_skill_pipeline(
                 memory_manager=orchestrator.memory_manager,
                 user_id=user_id,
                 session_id=session_id,
-                message=original_message,
+                message=history_message,  # 🔥 使用原始用户消息
                 response_text=chat_response,
                 intent="other",
                 current_topic=redirect_topic,
@@ -1518,22 +1605,37 @@ async def _handle_chat_conversation(
     # 根据是否有文件选择不同的 prompt（统一使用英文模板 + 语言指令）
     if file_uris:
         # 有文件时的 prompt
+        # 🔥 关键修改：当有图片上传时，优先分析图片内容，不要被历史对话干扰
+        # 对于图片问题，我们不包含历史上下文，让 LLM 专注于新图片
         prompt = f"""You are StudyX Agent, an intelligent learning assistant.
 
-The user has uploaded files (images/documents) and asked a question.
+**CRITICAL: The user has uploaded NEW files (images/documents). You MUST analyze THESE uploaded files FIRST and base your answer on their content.**
+
 {file_context}
 {context_info}
-{history_context}
 User message: {message}
 
-Please answer the user's question based on the uploaded images/files.
-- If it's an image, describe the content and answer the question
-- If it's a document, analyze its content and provide a detailed answer
-- If it's a math/physics problem, provide a **COMPLETE step-by-step solution with all calculations**
-- Be friendly, clear, and helpful
-- **DO NOT truncate or cut off your response. Complete all steps.**
+**IMPORTANT INSTRUCTIONS:**
+1. **FOCUS ON THE UPLOADED IMAGE/FILE** - Analyze what's shown in the uploaded image/document
+2. **DO NOT assume the question is the same as any previous conversation** - This is a NEW question with NEW files
+3. **If it's a math/physics problem image:**
+   - READ the problem from the image carefully
+   - Identify the specific question being asked
+   - Provide a **CLEAR, CONCISE step-by-step solution**
+   - Show key steps and calculations, skip trivial algebraic manipulations
+   - For proof problems: state key insights and main steps, don't expand every detail
+4. **If it's a document, analyze its content and provide a focused answer**
+5. Be friendly, clear, and helpful
+6. **Keep responses focused and well-structured**
 {lang_instruction}
-Please respond directly and completely (no length limit for math problems, otherwise within 800 words)."""
+
+**LENGTH GUIDELINES:**
+- Simple calculations: 100-300 words
+- Standard problems: 300-800 words  
+- Complex proofs/multi-part problems: UP TO 3000 words if needed (include ALL steps)
+- **CRITICAL: NEVER truncate mid-sentence or mid-proof. Always complete your response.**
+
+Please respond based on the uploaded files."""
     else:
         # 无文件时的 prompt
         if history_context:
@@ -1589,14 +1691,14 @@ Please respond directly and completely (within 500 words)."""
     
     try:
         # 🆕 传递 file_uris 给 Gemini（支持多模态识别）
-        # 🆕 增加 max_tokens 到 8192，确保复杂数学题解答有足够空间
+        # 🆕 增加 max_tokens 到 8192，确保复杂数学题/多部分证明有足够空间
         # 🆕 禁用 thinking 模式（thinking_budget=0），让更多 tokens 留给实际输出
         response = await gemini.generate(
             prompt=prompt,
             model="gemini-2.5-flash",
             response_format="text",
             temperature=0.7,
-            max_tokens=8192,  # 🆕 增加到 8192，避免复杂数学题回答被截断
+            max_tokens=8192,  # 🆕 复杂数学题需要更多空间，使用 8192
             thinking_budget=0,  # 🆕 禁用 thinking，避免思考 tokens 消耗输出配额
             file_uris=file_uris if file_uris else None  # 传递文件 URI
         )
@@ -2564,13 +2666,15 @@ async def chat(
             logger.info(f"🔒 Acquired lock for session: {session_id}")
             
             # 🔥 调用完整的 skill 框架流程（传递完整的 file_uris 数组）
+            # 🆕 暂时强制 skill_hint='chat' 禁用 Skills，只保留 LLM 对话
+            # 后续需要开启 Skills 时，将 skill_hint="chat" 改为 skill_hint=None 即可
             result = await execute_skill_pipeline(
                 message=message,
                 user_id=user_id,
                 session_id=session_id,
                 orchestrator=orchestrator,
                 quantity_override=None,
-                skill_hint=None,
+                skill_hint="chat",  # 🔥 强制使用 chat 模式，禁用 Skills
                 file_uris=file_uris if file_uris else None,  # 🆕 传递多文件 URI 列表
                 referenced_text=request.referenced_text,  # 🆕 传递引用文本
                 action_type=request.action_type,  # 🆕 传递快捷操作类型

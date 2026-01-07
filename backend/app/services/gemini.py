@@ -142,15 +142,16 @@ class GeminiClient:
                                 thinking_accumulated.append(thought)
                                 
                                 # 🔥 流式发送 thinking（支持实时显示）
-                                # 二次分块：确保 thinking 也是流式的
-                                chunk_size = 20
+                                import asyncio
+                                chunk_size = 30
                                 for i in range(0, len(thought), chunk_size):
                                     mini_chunk = thought[i:i+chunk_size]
                                     yield {
                                         "type": "thinking",
-                                        "text": mini_chunk,
+                                        "content": mini_chunk,  # 🔧 统一使用 "content"
                                         "accumulated": "".join(thinking_accumulated)
                                     }
+                                    await asyncio.sleep(0.02)  # 🆕 打字机效果
                             elif text:
                                 # 🔍 检查text是否是markdown thinking（以**开头）
                                 if text.strip().startswith('**') and not text.strip().startswith('```'):
@@ -158,29 +159,34 @@ class GeminiClient:
                                     logger.info(f"🧠 Thinking chunk (from text): {len(text)} chars, preview: {text[:50]}")
                                     thinking_accumulated.append(text)
                                     
-                                    # 🔥 流式发送 thinking
-                                    chunk_size = 20
+                                    # 🔥 流式发送 thinking（带延迟）
+                                    import asyncio
+                                    chunk_size = 30
                                     for i in range(0, len(text), chunk_size):
                                         mini_chunk = text[i:i+chunk_size]
                                         yield {
                                             "type": "thinking",
-                                            "text": mini_chunk,
+                                            "content": mini_chunk,  # 🔧 统一使用 "content"
                                             "accumulated": "".join(thinking_accumulated)
                                         }
+                                        await asyncio.sleep(0.02)  # 🆕 打字机效果
                                 else:
                                     # 有text内容，这是实际输出
                                     logger.info(f"📝 Content chunk: {len(text)} chars, preview: {text[:50]}")
                                     content_accumulated.append(text)
                                     
-                                    # 🔥 流式发送 content
-                                    chunk_size = 20
+                                    # 🔥 流式发送 content（带打字机延迟效果）
+                                    import asyncio
+                                    chunk_size = 30  # 每次发送的字符数
                                     for i in range(0, len(text), chunk_size):
                                         mini_chunk = text[i:i+chunk_size]
                                         yield {
                                             "type": "content",
-                                            "text": mini_chunk,
+                                            "content": mini_chunk,  # 🔧 修复：使用 "content" 而不是 "text"
                                             "accumulated": "".join(content_accumulated)
                                         }
+                                        # 🆕 添加小延迟实现打字机效果 (约 30ms)
+                                        await asyncio.sleep(0.03)
             
             # 🔧 关键修复：确保 done 事件一定会发送
             logger.info(f"🏁 Stream loop completed, sending done event")
@@ -514,13 +520,38 @@ class GeminiClient:
         
         raise Exception("Failed to generate content after all retries")
     
+    def _download_file(self, uri: str) -> Optional[bytes]:
+        """
+        🆕 统一的文件下载方法（自动识别 HTTP URL 或 GCS URI）
+        
+        Args:
+            uri: 文件 URL 或 GCS URI
+        
+        Returns:
+            文件二进制数据或 None
+        """
+        # 检测 URI 类型
+        if uri.startswith(("http://", "https://")):
+            # HTTP/HTTPS URL（如 StudyX OSS）
+            return self._download_from_url(uri)
+        elif uri.startswith("gs://"):
+            # GCS URI
+            return self._download_file_from_gcs(uri)
+        else:
+            logger.warning(f"⚠️ Unknown URI scheme: {uri}")
+            return None
+    
     def _build_multimodal_contents(self, prompt: str, file_uris: Optional[List[str]] = None) -> Any:
         """
         🆕 构建多模态内容（支持图片/文档 + 文字）
         
+        支持的 URI 类型：
+        - HTTP/HTTPS URL (如 https://media2.studyxapp.com/xxx.png)
+        - GCS URI (如 gs://bucket/path/file.jpg)
+        
         Args:
             prompt: 文字提示
-            file_uris: GCS 文件 URI 列表
+            file_uris: 文件 URL/URI 列表
         
         Returns:
             内容列表或纯文字
@@ -537,13 +568,13 @@ class GeminiClient:
             
             if mime_type and mime_type.startswith("image/"):
                 try:
-                    # 🆕 从 GCS 下载图片并转为 base64
-                    image_data = self._download_gcs_image(uri)
+                    # 🆕 使用统一下载方法（自动识别 HTTP 或 GCS）
+                    image_data = self._download_file(uri)
                     if image_data:
                         # 使用 PIL Image 或直接用 bytes
                         part = types.Part.from_bytes(data=image_data, mime_type=mime_type)
                         parts.append(part)
-                        logger.info(f"📎 Added image to multimodal content: {uri} ({mime_type}, {len(image_data)} bytes)")
+                        logger.info(f"📎 Added image to multimodal content: {uri[:60]}... ({mime_type}, {len(image_data)} bytes)")
                     else:
                         logger.warning(f"⚠️ Failed to download image: {uri}")
                 except Exception as e:
@@ -551,11 +582,11 @@ class GeminiClient:
             elif mime_type and mime_type == "application/pdf":
                 # 🆕 支持 PDF 文件
                 try:
-                    pdf_data = self._download_file_from_gcs(uri)
+                    pdf_data = self._download_file(uri)
                     if pdf_data:
                         part = types.Part.from_bytes(data=pdf_data, mime_type=mime_type)
                         parts.append(part)
-                        logger.info(f"📎 Added PDF to multimodal content: {uri} ({mime_type}, {len(pdf_data)} bytes)")
+                        logger.info(f"📎 Added PDF to multimodal content: {uri[:60]}... ({mime_type}, {len(pdf_data)} bytes)")
                     else:
                         logger.warning(f"⚠️ Failed to download PDF: {uri}")
                 except Exception as e:
@@ -564,23 +595,23 @@ class GeminiClient:
                                               "application/vnd.openxmlformats-officedocument.wordprocessingml.document"]:
                 # 🆕 支持文本文件和 Word 文档
                 try:
-                    file_data = self._download_file_from_gcs(uri)
+                    file_data = self._download_file(uri)  # 🔧 使用统一下载方法
                     if file_data:
                         # 对于文本文件，尝试解码并作为文本添加
                         if mime_type == "text/plain":
                             try:
                                 text_content = file_data.decode('utf-8')
                                 parts.append(f"[文件内容 - {uri.split('/')[-1]}]:\n{text_content}")
-                                logger.info(f"📎 Added text file to content: {uri} ({len(text_content)} chars)")
+                                logger.info(f"📎 Added text file to content: {uri[:60]}... ({len(text_content)} chars)")
                             except:
                                 part = types.Part.from_bytes(data=file_data, mime_type=mime_type)
                                 parts.append(part)
-                                logger.info(f"📎 Added text file as binary: {uri}")
+                                logger.info(f"📎 Added text file as binary: {uri[:60]}...")
                         else:
                             # Word 文档作为二进制处理
                             part = types.Part.from_bytes(data=file_data, mime_type=mime_type)
                             parts.append(part)
-                            logger.info(f"📎 Added document to multimodal content: {uri} ({mime_type}, {len(file_data)} bytes)")
+                            logger.info(f"📎 Added document to multimodal content: {uri[:60]}... ({mime_type}, {len(file_data)} bytes)")
                     else:
                         logger.warning(f"⚠️ Failed to download file: {uri}")
                 except Exception as e:
@@ -588,11 +619,11 @@ class GeminiClient:
             elif mime_type:
                 # 其他文件类型 - 尝试通用处理
                 try:
-                    file_data = self._download_file_from_gcs(uri)
+                    file_data = self._download_file(uri)  # 🔧 使用统一下载方法
                     if file_data:
                         part = types.Part.from_bytes(data=file_data, mime_type=mime_type)
                         parts.append(part)
-                        logger.info(f"📎 Added file to multimodal content: {uri} ({mime_type}, {len(file_data)} bytes)")
+                        logger.info(f"📎 Added file to multimodal content: {uri[:60]}... ({mime_type}, {len(file_data)} bytes)")
                     else:
                         logger.warning(f"⚠️ Failed to download file: {uri}")
                 except Exception as e:
@@ -633,6 +664,34 @@ class GeminiClient:
         
         # 其他 bucket 使用 Google Cloud Storage 公开 URL
         return f"https://storage.googleapis.com/{bucket_name}/{blob_path}"
+    
+    def _download_from_url(self, url: str) -> Optional[bytes]:
+        """
+        🆕 从 HTTP/HTTPS URL 下载文件（支持 StudyX OSS 等外部 URL）
+        
+        Args:
+            url: HTTP/HTTPS URL (如 https://media2.studyxapp.com/temp/xxx.png)
+        
+        Returns:
+            文件二进制数据或 None
+        """
+        import requests
+        
+        try:
+            logger.info(f"📥 Downloading from HTTP URL: {url[:80]}...")
+            response = requests.get(url, timeout=60, headers={
+                "User-Agent": "Mozilla/5.0 (compatible; SkillAgent/1.0)"
+            })
+            if response.status_code == 200:
+                file_data = response.content
+                logger.info(f"✅ Downloaded file from URL: {url[:50]}... ({len(file_data)} bytes)")
+                return file_data
+            else:
+                logger.warning(f"⚠️ HTTP download failed ({response.status_code}): {url}")
+                return None
+        except Exception as e:
+            logger.error(f"❌ Failed to download from URL: {url}, error: {e}")
+            return None
     
     def _download_file_from_gcs(self, gcs_uri: str) -> Optional[bytes]:
         """

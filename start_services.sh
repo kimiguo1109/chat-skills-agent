@@ -55,7 +55,7 @@ sleep 1
 
 # 启动后端
 echo "启动后端服务 (端口 $BACKEND_PORT)..."
-nohup python -m uvicorn app.main:app --host 0.0.0.0 --port $BACKEND_PORT --reload \
+nohup python3 -m uvicorn app.main:app --host 0.0.0.0 --port $BACKEND_PORT --reload \
     > "$PROJECT_DIR/logs/backend.log" 2>&1 &
 BACKEND_PID=$!
 echo $BACKEND_PID > "$PROJECT_DIR/logs/backend.pid"

@@ -430,6 +430,26 @@ Headers: { "token": "<token>" }
 # 失败（用户没设置）: 默认返回 "en"
 ```
 
+**支持的 30 种语言**:
+| 代码 | 语言 | 代码 | 语言 |
+|------|------|------|------|
+| `en` | English | `zh` | 简体中文 |
+| `zh-TW` | 繁體中文 | `ja` | 日本語 |
+| `ko` | 한국어 | `fr` | Français |
+| `es` | Español | `pt` | Português |
+| `de` | Deutsch | `it` | Italiano |
+| `ru` | Русский | `vi` | Tiếng Việt |
+| `th` | ภาษาไทย | `hi` | हिंदी |
+| `id` | Bahasa Indonesia | `ms` | Melayu |
+| `tr` | Türkçe | `pl` | Polski |
+| `nl` | Nederlands | `ro` | Română |
+| `cs` | Čeština | `sk` | Slovenčina |
+| `hu` | Magyar | `tl` | Tagalog |
+| `no` | Norwegian | `da` | Danish |
+| `fi` | Finnish | `auto` | 自动检测 |
+
+语言映射定义在 `backend/app/api/external.py` 的 `QLANG_TO_CODE` 字典中。
+
 ### 流程 3: 题目上下文获取
 
 ```python
@@ -548,6 +568,70 @@ backend/artifacts/           # 会话历史存储（按用户 ID 分目录）
 如果 LLM 响应被截断：
 - 检查 `max_tokens` 设置（当前 8192）
 - 检查 `thinking_budget`（设为 0 可禁用思考模式，节省 tokens）
+
+### 5. App 和 Web 接口 Skills 开关
+
+**当前状态**: App 和 Web 接口的 Skills 均已**临时禁用**，所有请求强制使用 `intent='other'`（直接 LLM 对话）。
+
+**原因**: 意图识别有时会误判，导致不相关的技能被触发（如用户问数学题却返回 Quiz 练习题）。
+
+**开启 Skills 的方式**:
+
+```python
+# ============= Web 接口 =============
+# 文件: backend/app/api/external_web.py
+# 位置: generate_sse_stream() 函数中，找到 execute_skill_pipeline() 调用
+# 修改: 将 skill_hint="chat" 改为 skill_hint=None
+
+# ============= App 接口 =============  
+# 文件: backend/app/api/external.py
+# 位置: /api/external/chat 路由中，找到 execute_skill_pipeline() 调用
+# 修改: 将 skill_hint="chat" 改为 skill_hint=None
+
+# 示例（当前代码 - Skills 禁用）:
+result = await execute_skill_pipeline(
+    message=message,
+    user_id=user_id,
+    session_id=session_id,
+    orchestrator=orchestrator,
+    quantity_override=None,
+    skill_hint="chat",  # 🔥 这一行强制 intent='other'，禁用所有 Skills
+    # ... 其他参数
+)
+
+# 恢复 Skills:
+result = await execute_skill_pipeline(
+    message=message,
+    user_id=user_id,
+    session_id=session_id,
+    orchestrator=orchestrator,
+    quantity_override=None,
+    skill_hint=None,  # ✅ 改为 None 即可恢复 Skills
+    # ... 其他参数
+)
+```
+
+**`skill_hint` 参数说明**:
+| 值 | 效果 |
+|---|---|
+| `"chat"` | 强制 `intent='other'`，跳过所有 Skills，直接用 LLM 回答 |
+| `"quiz"` | 强制 `intent='quiz_request'`，生成练习题 |
+| `"flashcard"` | 强制 `intent='flashcard_request'`，生成闪卡 |
+| `None` | 正常意图识别流程 |
+
+### 6. 语言检测逻辑
+
+**当前逻辑**:
+1. 如果请求中指定了 `language` 参数 → 使用指定语言
+2. 如果有 `token` → 调用 StudyX API 获取用户语言偏好
+   - API 返回有效语言 → 使用该语言（如 `zh`, `en`, `ja`）
+   - API 返回 `code=-1`（无偏好）→ 返回 `"auto"`（自动检测）
+3. 如果没有 `token` → 使用 `"auto"`
+
+**`language="auto"` 时的行为**:
+- LLM 提示中添加: "You MUST respond in the **SAME LANGUAGE** as the user's message"
+- 用户用中文提问 → 中文回复
+- 用户用英文提问 → 英文回复
 
 ---
 

@@ -2,7 +2,7 @@
 意图识别相关的 Pydantic 模型
 """
 from pydantic import BaseModel, Field
-from typing import Optional, List, Dict, Any
+from typing import Optional, List, Dict, Any, Union
 
 
 class MemorySummary(BaseModel):
@@ -33,7 +33,7 @@ class MemorySummary(BaseModel):
 
 class IntentResult(BaseModel):
     """意图识别结果"""
-    intent: str | List[str] = Field(
+    intent: Union[str, List[str]] = Field(
         ...,
         description="意图标签，如 quiz, explain, other。可以是单个或多个"
     )

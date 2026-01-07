@@ -250,63 +250,24 @@ class ConversationSessionManager:
         metadata_file = self.storage_path / f"{session_id}_metadata.json"
         
         if session_file.exists():
-            # 🆕 检查 server_start_id（服务重启检测）
-            should_archive = False
-            old_server_id = None
-            
+            # 🔧 移除服务重启归档逻辑 - 会话应该在服务重启后继续保留
+            # 只更新 metadata 中的 server_start_id，不归档旧会话
             if metadata_file.exists():
                 try:
                     import json
                     with open(metadata_file, 'r', encoding='utf-8') as f:
                         old_metadata = json.load(f)
-                    old_server_id = old_metadata.get('server_start_id')
                     
-                    # 🔧 检查服务是否重启
+                    # 更新 server_start_id（但不归档）
+                    old_server_id = old_metadata.get('server_start_id')
                     if old_server_id and self._current_server_start_id and old_server_id != self._current_server_start_id:
-                        logger.info(f"🔄 Server restarted (old: {old_server_id[:8]}..., new: {self._current_server_start_id[:8]}...), archiving old session")
-                        should_archive = True
+                        logger.info(f"🔄 Server restarted, continuing existing session (old: {old_server_id[:8]}..., new: {self._current_server_start_id[:8]}...)")
+                        # 更新 metadata 中的 server_start_id
+                        old_metadata['server_start_id'] = self._current_server_start_id
+                        with open(metadata_file, 'w', encoding='utf-8') as f:
+                            json.dump(old_metadata, f, ensure_ascii=False, indent=2)
                 except Exception as e:
-                    logger.warning(f"⚠️ Failed to check server_start_id: {e}")
-            
-            if should_archive:
-                # 🆕 归档旧 session
-                archive_timestamp = timestamp.strftime("%Y%m%d_%H%M%S")
-                archive_file = self.storage_path / f"{session_id}_archived_{archive_timestamp}.md"
-                
-                try:
-                    # 移动旧的 MD 文件到归档
-                    import shutil
-                    shutil.move(str(session_file), str(archive_file))
-                    logger.info(f"📦 Archived old session to: {archive_file.name}")
-                except Exception as e:
-                    logger.warning(f"⚠️ Failed to archive old session: {e}")
-                
-                # 创建新的 session（重置 turn_counter）
-                self.current_session_id = session_id
-                self.current_session_file = session_file
-                self.turn_counter = 0
-                
-                # 初始化新的 metadata
-                self.session_metadata = {
-                    "session_id": session_id,
-                    "user_id": self.user_id,
-                    "start_time": timestamp.isoformat(),
-                    "last_updated": timestamp.isoformat(),
-                    "status": "active",
-                    "total_turns": 0,
-                    "inherited_context": {},
-                    "previous_session_id": None,
-                    "topics": [],
-                    "last_topic": None,
-                    "skills_used": {},
-                    "artifacts_generated": [],
-                    "server_start_id": self._current_server_start_id
-                }
-                
-                # 创建新的 MD 文件头
-                await self._write_session_header_with_inheritance({})
-                logger.info(f"📝 Created new session after server restart: {session_id}")
-                return
+                    logger.warning(f"⚠️ Failed to update server_start_id: {e}")
             
             # 正常加载现有 session
             self.current_session_id = session_id
